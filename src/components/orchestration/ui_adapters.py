@@ -7,6 +7,7 @@ import json
 from typing import AsyncGenerator, Dict, Any, Optional
 
 from components.utils import build_conversation_context
+from components.guardrails.output_guard import StreamingBlocklistFilter
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,90 @@ def _build_filters_footnote(filters: Dict, narrowed: bool) -> str:
     if narrowed:
         base += " (narrowed — combined filter returned no results)"
     return "*" + base + "*"
+
+
+def _render_sources(sources_collected) -> str:
+    """
+    Render collected sources as markdown with doc:// URLs for ChatUI to parse.
+    """
+    sources_text = "\n\n**Sources:**\n"
+    for i, source in enumerate(sources_collected, 1):
+        if isinstance(source, dict):
+            title = source.get('title', 'Unknown')
+            uri = source.get('uri') or 'doc://#'
+            sources_text += f"{i}. [{title}]({uri})\n"
+        else:
+            sources_text += f"{i}. {str(source)}\n"
+    return sources_text
+
+
+async def _consume_stream(process_iter, output_filter: Optional[StreamingBlocklistFilter] = None):
+    """
+    Shared event consumer for both ChatUI adapters.
+
+    Maps process_query_streaming events to plain text yielded to the client
+    Appends the filters footnote + sources on `end` (for Chatui)
+    
+    Output guard: when `output_filter` is enabled, every token is routed through 
+    the streaming blocklist filter. When there is a hit the stream stops, 
+    the notice is displayed, and the footnote/sources are suppressed.
+    """
+    filters_footnote = None
+    sources_collected = None
+    blocked = False
+
+    async for result in process_iter:
+        if not isinstance(result, dict):
+            yield str(result)
+            await asyncio.sleep(0)
+            continue
+
+        result_type = result.get("type", "data")
+        content = result.get("content", "")
+
+        if result_type == "data":
+            if output_filter is not None:
+                emit, hit = output_filter.feed(content)
+                if emit:
+                    yield emit
+                if hit:
+                    blocked = True
+                    break  # stop streaming the (now-blocked) answer
+            else:
+                yield content
+        elif result_type == "filters_applied":
+            filters_footnote = _build_filters_footnote(
+                content.get("filters", {}), content.get("narrowed", False)
+            )
+        elif result_type == "sources":
+            sources_collected = content
+        elif result_type == "end":
+            if output_filter is not None and not blocked:
+                tail, hit = output_filter.flush_final()
+                if tail:
+                    yield tail
+                if hit:
+                    blocked = True
+            if blocked:
+                return  # suppress footnote + sources on a blocked answer
+            if filters_footnote:
+                yield f"\n\n---\n{filters_footnote}"
+            if sources_collected:
+                logger.info("Sending markdown sources with doc:// scheme")
+                yield _render_sources(sources_collected)
+        elif result_type == "error":
+            yield f"Error: {content}"
+
+        await asyncio.sleep(0)
+
+
+def _make_output_filter(blocklist, output_notice: str) -> Optional[StreamingBlocklistFilter]:
+    """
+    Construct a fresh per-request output filter instance, or None when the guard is off.
+    """
+    if blocklist is None:
+        return None
+    return StreamingBlocklistFilter(blocklist, output_notice)
 
 
 async def process_query_streaming(
@@ -73,7 +158,8 @@ async def process_query_streaming(
         yield {"type": "error", "content": str(e)}
 
 
-async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: int = 8000):
+async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: int = 8000,
+                         blocklist=None, output_notice: str = "[response withheld]"):
     """Text-only adapter for ChatUI with structured message support"""
     logger.debug(f"ChatUI adapter called with data type: {type(data)}")
 
@@ -122,48 +208,18 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
             f"USER: {msg.content}" for msg in user_only[-max_turns:]
         ) if user_only else None
 
-        full_response = ""
-        sources_collected = None
-        filters_footnote = None
-
-        async for result in process_query_streaming(
-            compiled_graph=compiled_graph,
-            query=query,
-            file_upload=None,
-            conversation_context=conversation_context,
-            user_messages_history=user_messages_history,
+        output_filter = _make_output_filter(blocklist, output_notice)
+        async for result in _consume_stream(
+            process_query_streaming(
+                compiled_graph=compiled_graph,
+                query=query,
+                file_upload=None,
+                conversation_context=conversation_context,
+                user_messages_history=user_messages_history,
+            ),
+            output_filter,
         ):
-            if isinstance(result, dict):
-                result_type = result.get("type", "data")
-                content = result.get("content", "")
-
-                if result_type == "data":
-                    full_response += content
-                    yield content
-                elif result_type == "filters_applied":
-                    filters_footnote = _build_filters_footnote(
-                        content.get("filters", {}), content.get("narrowed", False)
-                    )
-                elif result_type == "sources":
-                    sources_collected = content
-                elif result_type == "end":
-                    if filters_footnote:
-                        yield f"\n\n---\n{filters_footnote}"
-                    if sources_collected:
-                        # Send sources as markdown with doc:// URLs for ChatUI to parse
-                        sources_text = "\n\n**Sources:**\n"
-                        for i, source in enumerate(sources_collected, 1):
-                            title = source.get('title', 'Unknown')
-                            uri = source.get('uri') or 'doc://#'
-                            sources_text += f"{i}. [{title}]({uri})\n"
-                        logger.info(f"Sending markdown sources with doc:// scheme")
-                        yield sources_text
-                elif result_type == "error":
-                    yield f"Error: {content}"
-            else:
-                yield str(result)
-
-            await asyncio.sleep(0)
+            yield result
 
     except Exception as e:
         logger.error(f"ChatUI error: {str(e)}")
@@ -171,7 +227,8 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
         yield f"Error: {str(e)}"
 
 
-async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_chars: int = 8000):
+async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_chars: int = 8000,
+                              blocklist=None, output_notice: str = "[response withheld]"):
     """File upload adapter for ChatUI with structured message support"""
     try:
         # Handle both dict and object access patterns
@@ -240,51 +297,20 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
                     yield f"Error: Failed to decode uploaded file - {str(e)}"
                     return
 
-        sources_collected = None
-        filters_footnote = None
-
-        async for result in process_query_streaming(
-            compiled_graph=compiled_graph,
-            query=query,
-            file_upload=None,
-            conversation_context=conversation_context,
-            user_messages_history=user_messages_history,
-            file_content=file_content,
-            filename=filename
+        output_filter = _make_output_filter(blocklist, output_notice)
+        async for result in _consume_stream(
+            process_query_streaming(
+                compiled_graph=compiled_graph,
+                query=query,
+                file_upload=None,
+                conversation_context=conversation_context,
+                user_messages_history=user_messages_history,
+                file_content=file_content,
+                filename=filename
+            ),
+            output_filter,
         ):
-            if isinstance(result, dict):
-                result_type = result.get("type", "data")
-                content = result.get("content", "")
-
-                if result_type == "data":
-                    yield content
-                elif result_type == "filters_applied":
-                    filters_footnote = _build_filters_footnote(
-                        content.get("filters", {}), content.get("narrowed", False)
-                    )
-                elif result_type == "sources":
-                    sources_collected = content
-                elif result_type == "end":
-                    if filters_footnote:
-                        yield f"\n\n---\n{filters_footnote}"
-                    if sources_collected:
-                        # Send sources as markdown with doc:// URLs for ChatUI to parse
-                        sources_text = "\n\n**Sources:**\n"
-                        for i, source in enumerate(sources_collected, 1):
-                            if isinstance(source, dict):
-                                title = source.get('title', 'Unknown')
-                                uri = source.get('uri') or 'doc://#'
-                                sources_text += f"{i}. [{title}]({uri})\n"
-                            else:
-                                sources_text += f"{i}. {str(source)}\n"
-                        logger.info(f"Sending markdown sources with doc:// scheme (file)")
-                        yield sources_text
-                elif result_type == "error":
-                    yield f"Error: {content}"
-            else:
-                yield str(result)
-
-            await asyncio.sleep(0)
+            yield result
 
     except Exception as e:
         logger.error(f"ChatUI file adapter error: {str(e)}")

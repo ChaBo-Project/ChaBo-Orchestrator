@@ -17,6 +17,8 @@ from components.orchestration.state import ChatUIInput, ChatUIFileInput
 from components.utils import getconfig
 from components.retriever.filters import FILTER_VALUES
 from components.rewriter.db_context import load_db_context, DBContext
+from components.guardrails.input_guard import InputGuardClient
+from components.guardrails.output_guard import load_compiled_blocklist
 from typing import Dict
 
 config = getconfig("params.cfg")
@@ -64,6 +66,43 @@ logger.info("Initializing ChaBoHFEndpointRetriever and Generator...")
 retriever_instance = create_retriever_from_config(config_file="params.cfg")
 generator_instance = Generator()
 
+# Get input guard config 
+INPUT_GUARD_ENABLED = config.getboolean("input_guard", "enabled", fallback=False)
+INPUT_GUARD_MODE = config.get("input_guard", "mode", fallback="llm").strip()
+INPUT_GUARD_ENDPOINT = config.get("input_guard", "endpoint_url", fallback="").strip()
+INPUT_GUARD_MODEL = config.get("input_guard", "model", fallback="Qwen/Qwen3Guard-Gen-0.6B").strip()
+INPUT_GUARD_BLOCK_CTRL = config.getboolean("input_guard", "block_controversial", fallback=False)
+INPUT_GUARD_TIMEOUT = config.getfloat("input_guard", "timeout_s", fallback=2.0)
+INPUT_GUARD_MSG = config.get(
+    "input_guard", "blocked_message", fallback="I'm sorry, but I can't help with that request."
+).strip()
+
+guard_client = None
+if INPUT_GUARD_ENABLED:
+    if INPUT_GUARD_MODE == "classifier" and not INPUT_GUARD_ENDPOINT:
+        raise ValueError("[input_guard] mode=classifier requires endpoint_url to be set.")
+    guard_client = InputGuardClient(
+        mode=INPUT_GUARD_MODE,
+        qwen_endpoint=INPUT_GUARD_ENDPOINT,
+        qwen_model=INPUT_GUARD_MODEL,
+        hf_token=os.getenv("HF_TOKEN"),
+        generator=generator_instance,
+        timeout_s=INPUT_GUARD_TIMEOUT,
+        block_controversial=INPUT_GUARD_BLOCK_CTRL,
+    )
+    logger.info(f"Input guard enabled (mode={INPUT_GUARD_MODE})")
+
+# Get output guard config 
+OUTPUT_GUARD_ENABLED = config.getboolean("output_guard", "enabled", fallback=False)
+OUTPUT_GUARD_NOTICE = config.get("output_guard", "notice", fallback="[response withheld]")
+blocklist = None
+if OUTPUT_GUARD_ENABLED:
+    blocklist_path = config.get(
+        "output_guard", "blocklist_path", fallback="src/components/guardrails/blocklist.txt"
+    )
+    blocklist = load_compiled_blocklist(blocklist_path)
+    logger.info("Output guard enabled")
+
 # Build the LangGraph workflow
 compiled_graph = build_workflow(
     retriever_instance,
@@ -72,6 +111,9 @@ compiled_graph = build_workflow(
     filter_values=FILTER_VALUES,
     db_context=db_context if REWRITER_ENABLED else None,
     rewriter_enabled=REWRITER_ENABLED,
+    guard_client=guard_client,
+    input_guard_enabled=INPUT_GUARD_ENABLED,
+    blocked_message=INPUT_GUARD_MSG,
 )
 
 
@@ -101,9 +143,11 @@ async def root():
 # LANGSERVE ROUTES
 #----------------------------------------
 
-# Inject compiled_graph and config into adapters
-text_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS)
-file_adapter = partial(chatui_file_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS)
+# Inject compiled_graph and config into adapters (blocklist=None when output guard disabled)
+text_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
+                       blocklist=blocklist, output_notice=OUTPUT_GUARD_NOTICE)
+file_adapter = partial(chatui_file_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
+                       blocklist=blocklist, output_notice=OUTPUT_GUARD_NOTICE)
 
 # Text-only endpoint
 add_routes(
