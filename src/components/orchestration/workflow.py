@@ -86,7 +86,8 @@ def build_workflow(
         ig_node = partial(input_guard_node, guard_client=guard_client)
         br_node = partial(blocked_response_node, blocked_message=blocked_message)
         workflow.add_node("input_guard", ig_node)
-        workflow.add_node("guard_gate", guard_gate_node)
+        # defer=True holds guard_gate node until both incoming branches complete (otherwise x2 generations...)
+        workflow.add_node("guard_gate", guard_gate_node, defer=True)
         workflow.add_node("blocked_response", br_node)
 
         # Fan-out: guard runs in parallel with the main branch (both off ingest)
