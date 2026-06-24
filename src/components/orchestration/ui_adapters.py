@@ -4,12 +4,19 @@ ChatUI Adapters for LangGraph Workflow Streaming
 import logging
 import asyncio
 import json
+import os
 from typing import AsyncGenerator, Dict, Any, Optional
 
 from components.utils import build_conversation_context
 from components.guardrails.output_guard import StreamingBlocklistFilter
 
 logger = logging.getLogger(__name__)
+
+# OUTPUT GUARD: Small delay for trailing SSE events (answer tail / footnote / sources) for ChatUI.
+# ChatUI's langserve-streaming parser reads event type from the chunk prefix (e.g. 'data:')
+# With output guard enabled, chunks are buffered. This is fine except for the final chunks containing sources.
+# This delay is just a sleep timer which forces separation. 
+_TRAILING_FLUSH_DELAY = float(os.getenv("TRAILING_FLUSH_DELAY", "0.05"))
 
 
 def _build_filters_footnote(filters: Dict, narrowed: bool) -> str:
@@ -84,12 +91,14 @@ async def _consume_stream(process_iter, output_filter: Optional[StreamingBlockli
                 tail, hit = output_filter.flush_final()
                 if tail:
                     yield tail
+                    await asyncio.sleep(_TRAILING_FLUSH_DELAY)
                 if hit:
                     blocked = True
             if blocked:
                 return  # suppress footnote + sources on a blocked answer
             if filters_footnote:
                 yield f"\n\n---\n{filters_footnote}"
+                await asyncio.sleep(_TRAILING_FLUSH_DELAY)
             if sources_collected:
                 logger.info("Sending markdown sources with doc:// scheme")
                 yield _render_sources(sources_collected)
