@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chabo Architecture</title>
+<style>
+:root {
+  --font-sans: system-ui, -apple-system, sans-serif;
+  --color-bg:#ffffff;--color-bg2:#f5f4f0;--color-bg3:#eeecea;
+  --color-text:#2c2c2a;--color-text2:#5f5e5a;--color-text3:#888780;
+  --color-border:rgba(0,0,0,0.12);--color-border2:rgba(0,0,0,0.22);
+}
+@media(prefers-color-scheme:dark){
+  :root{--color-bg:#1a1a18;--color-bg2:#242422;--color-bg3:#2e2e2c;
+  --color-text:#e8e6e0;--color-text2:#a8a69e;--color-text3:#6e6d67;
+  --color-border:rgba(255,255,255,0.1);--color-border2:rgba(255,255,255,0.18);}
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans);background:var(--color-bg);color:var(--color-text);padding:2rem;max-width:1200px;margin:0 auto}
+h1{font-size:22px;font-weight:500;margin-bottom:4px}
+.meta{font-size:13px;color:var(--color-text2);margin-bottom:2rem}
+.meta a{color:inherit}
+h2{font-size:16px;font-weight:500;margin:2rem 0 1rem;padding-bottom:6px;border-bottom:0.5px solid var(--color-border)}
+svg text{font-family:var(--font-sans)}
+svg .ts{font-size:11px;fill:var(--color-text2)}
+svg .th{font-size:12px;font-weight:500;fill:var(--color-text)}
+svg .tc{font-size:10px;fill:var(--color-text3)}
+.c-amber rect{fill:#FAEEDA;stroke:#EF9F27}.c-amber text{fill:#633806}
+.c-teal rect{fill:#E1F5EE;stroke:#1D9E75}.c-teal text{fill:#04342C}
+.c-purple rect{fill:#EEEDFE;stroke:#7F77DD}.c-purple text{fill:#26215C}
+.c-coral rect{fill:#FAECE7;stroke:#D85A30}.c-coral text{fill:#4A1B0C}
+.c-gray rect{fill:#F1EFE8;stroke:#B4B2A9}.c-gray text{fill:#2C2C2A}
+.c-blue rect{fill:#E6F1FB;stroke:#378ADD}.c-blue text{fill:#042C53}
+@media(prefers-color-scheme:dark){
+  .c-amber rect{fill:#412402;stroke:#EF9F27}.c-amber text{fill:#FAC775}
+  .c-teal rect{fill:#04342C;stroke:#1D9E75}.c-teal text{fill:#9FE1CB}
+  .c-purple rect{fill:#26215C;stroke:#7F77DD}.c-purple text{fill:#EEEDFE}
+  .c-coral rect{fill:#4A1B0C;stroke:#D85A30}.c-coral text{fill:#F5C4B3}
+  .c-gray rect{fill:#2C2C2A;stroke:#5F5E5A}.c-gray text{fill:#D3D1C7}
+  .c-blue rect{fill:#042C53;stroke:#378ADD}.c-blue text{fill:#B5D4F4}
+  svg .ts{fill:#a8a69e}svg .th{fill:#e8e6e0}svg .tc{fill:#6e6d67}
+}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:1.2rem;font-size:12px;color:var(--color-text2)}
+.leg{display:flex;align-items:center;gap:5px}
+.leg-dot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.zones{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.zone{border-radius:12px;border:0.5px solid;padding:12px 14px}
+.zone-title{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.comps{display:flex;flex-wrap:wrap;gap:8px}
+.comp{border-radius:8px;border:0.5px solid var(--color-border2);padding:9px 12px;cursor:pointer;transition:box-shadow .15s,transform .15s;width:100%;background:var(--color-bg2)}
+.comp:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.comp.active{box-shadow:0 0 0 2px var(--hl,#0F6E56)}
+.comp-name{font-size:12.5px;font-weight:500;margin-bottom:2px;color:var(--color-text)}
+.comp-sub{font-size:11px;color:var(--color-text2);line-height:1.4}
+.infra-tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;margin-top:4px;font-weight:500}
+.always-tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;font-weight:500}
+.panel{margin-top:12px;border-radius:10px;border:0.5px solid var(--color-border2);padding:14px 16px;display:none;background:var(--color-bg2)}
+.panel.open{display:block}
+.panel h3{font-size:14px;font-weight:500;color:var(--color-text);margin:0 0 6px}
+.panel p{font-size:12.5px;color:var(--color-text2);margin:0 0 8px;line-height:1.6}
+.panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.panel-item{background:var(--color-bg3);border-radius:6px;padding:8px 10px}
+.panel-item .lbl{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--color-text3);margin-bottom:3px}
+.panel-item .val{font-size:12px;color:var(--color-text);line-height:1.5}
+.flow-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:10px;font-size:11.5px}
+.flow-step{background:var(--color-bg3);border:0.5px solid var(--color-border);border-radius:6px;padding:4px 10px;color:var(--color-text);white-space:nowrap}
+.flow-arr{color:var(--color-text3);font-size:13px}
+.gate{background:var(--color-bg3);border:1.5px solid #639922;border-radius:6px;padding:4px 10px;color:#27500A;white-space:nowrap;font-weight:500;font-size:11.5px}
+.z-doc{background:rgba(250,238,218,.08);border-color:#EF9F27}
+.z-mid{background:rgba(225,245,238,.05);border-color:#1D9E75}
+.z-query{background:rgba(238,237,254,.05);border-color:#7F77DD}
+.tag-hf{background:rgba(255,196,0,.15);color:#7a5a00;border:0.5px solid #EF9F27}
+.tag-selfhost{background:rgba(225,245,238,.3);color:#085041;border:0.5px solid #0F6E56}
+.tag-optional{background:var(--color-bg3);color:var(--color-text2);border:0.5px solid var(--color-border)}
+.tag-cloud{background:rgba(238,237,254,.3);color:#3C3489;border:0.5px solid #7F77DD}
+.tag-storage{background:rgba(59,139,212,.1);color:#0C447C;border:0.5px solid #378ADD}
+.tag-on{background:rgba(234,243,222,.4);color:#27500A;border:0.5px solid #639922}
+.tag-off{background:var(--color-bg3);color:var(--color-text3);border:0.5px solid var(--color-border)}
+.tag-az{background:rgba(59,139,212,.1);color:#0C447C;border:0.5px solid #378ADD}
+.c-doc-tag{--hl:#BA7517}
+.c-mid-tag{--hl:#0F6E56}
+.c-query-tag{--hl:#534AB7}
+.c-front-tag{--hl:#993C1D}
+.sect-label{font-size:11px;font-weight:500;color:var(--color-text2);margin:10px 0 6px;text-transform:uppercase;letter-spacing:.05em}
+.col-label{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:var(--color-text3);text-align:center;margin-bottom:6px;padding:4px 0;border-bottom:0.5px solid var(--color-border)}
+footer{margin-top:3rem;padding-top:1rem;border-top:0.5px solid var(--color-border);font-size:11px;color:var(--color-text3)}
+</style>
+</head>
+<body>
+<h1>Chabo — Architecture</h1>
+<p class="meta"><a href="https://github.com/ChaBo-Project/chabo" target="_blank">github.com/ChaBo-Project/chabo</a></p>
+
+<h2>Simplified architecture — containers and services</h2>
+<div style="width:100%;overflow-x:auto;margin-bottom:2rem">
+<svg width="100%" viewBox="0 0 960 520" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Chabo simplified architecture — containers and hosted services</title>
+<desc>Six self-managed containers and three external hosted services, with data flow arrows between them</desc>
+<defs>
+  <marker id="sa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="sa-t" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#1D9E75" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="sa-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#7F77DD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="sa-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#BA7517" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="sa-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#378ADD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="sa-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#D85A30" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="sa-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#639922" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<!-- ── Column labels ── -->
+<text font-size="10" font-weight="500" fill="#888780" x="120" y="14" text-anchor="middle" font-family="system-ui,sans-serif">Offline pipeline</text>
+<text font-size="10" font-weight="500" fill="#888780" x="430" y="14" text-anchor="middle" font-family="system-ui,sans-serif">Shared services</text>
+<text font-size="10" font-weight="500" fill="#888780" x="760" y="14" text-anchor="middle" font-family="system-ui,sans-serif">Query runtime</text>
+<line x1="248" y1="6" x2="248" y2="410" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="4 4"/>
+<line x1="610" y1="6" x2="610" y2="410" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="4 4"/>
+
+<!-- ══ SELF-MANAGED CONTAINERS ══════════════════════════════════ -->
+
+<!-- C1 -->
+<rect x="16" y="24" width="218" height="100" rx="10" fill="#FAEEDA" stroke="#EF9F27" stroke-width="1.2"/>
+<text font-size="11" font-weight="600" fill="#633806" x="125" y="44" text-anchor="middle" font-family="system-ui,sans-serif">C1 · Doc Management Console</text>
+<text font-size="10" fill="#BA7517" x="125" y="58" text-anchor="middle" font-family="system-ui,sans-serif">always on · CPU</text>
+<rect x="28" y="66" width="90" height="46" rx="6" fill="white" stroke="#EF9F27" stroke-width="0.5"/>
+<text font-size="10" fill="#633806" x="73" y="84" text-anchor="middle" font-family="system-ui,sans-serif">Upload · Chunk</text>
+<text font-size="10" fill="#633806" x="73" y="97" text-anchor="middle" font-family="system-ui,sans-serif">Metadata · Approval</text>
+<rect x="128" y="66" width="94" height="46" rx="6" fill="white" stroke="#639922" stroke-width="0.8"/>
+<text font-size="10" fill="#27500A" x="175" y="82" text-anchor="middle" font-family="system-ui,sans-serif">Postgres</text>
+<text font-size="10" fill="#27500A" x="175" y="95" text-anchor="middle" font-family="system-ui,sans-serif">+ Blob store</text>
+
+<!-- C2 -->
+<rect x="16" y="144" width="218" height="78" rx="10" fill="#FAEEDA" stroke="#EF9F27" stroke-width="1.2"/>
+<text font-size="11" font-weight="600" fill="#633806" x="125" y="163" text-anchor="middle" font-family="system-ui,sans-serif">C2 · Doc Processing Worker</text>
+<text font-size="10" fill="#BA7517" x="125" y="177" text-anchor="middle" font-family="system-ui,sans-serif">on-demand · GPU</text>
+<text font-size="10" fill="#633806" x="125" y="196" text-anchor="middle" font-family="system-ui,sans-serif">Extract · Normalise · Enrich · Embed · Ingest</text>
+
+<!-- C1 → C2 approval trigger -->
+<line x1="125" y1="124" x2="125" y2="142" stroke="#639922" stroke-width="1.2" marker-end="url(#sa-g)"/>
+<text font-size="9" fill="#3B6D11" x="132" y="135" font-family="system-ui,sans-serif">approval</text>
+
+<!-- C3 -->
+<rect x="268" y="24" width="218" height="100" rx="10" fill="#E1F5EE" stroke="#1D9E75" stroke-width="1.2"/>
+<text font-size="11" font-weight="600" fill="#04342C" x="377" y="44" text-anchor="middle" font-family="system-ui,sans-serif">C3 · Embedding / Retrieval</text>
+<text font-size="10" fill="#085041" x="377" y="58" text-anchor="middle" font-family="system-ui,sans-serif">always on · CPU or GPU</text>
+<rect x="280" y="66" width="90" height="46" rx="6" fill="white" stroke="#1D9E75" stroke-width="0.5"/>
+<text font-size="10" fill="#04342C" x="325" y="84" text-anchor="middle" font-family="system-ui,sans-serif">Embedding</text>
+<text font-size="10" fill="#04342C" x="325" y="97" text-anchor="middle" font-family="system-ui,sans-serif">model (BGE-M3)</text>
+<rect x="378" y="66" width="96" height="46" rx="6" fill="white" stroke="#1D9E75" stroke-width="0.5"/>
+<text font-size="10" fill="#04342C" x="426" y="84" text-anchor="middle" font-family="system-ui,sans-serif">Reranker</text>
+<text font-size="10" fill="#04342C" x="426" y="97" text-anchor="middle" font-family="system-ui,sans-serif">model (BGE-rr)</text>
+
+<!-- C4 -->
+<rect x="268" y="144" width="218" height="78" rx="10" fill="#E6F1FB" stroke="#378ADD" stroke-width="1.2"/>
+<text font-size="11" font-weight="600" fill="#042C53" x="377" y="163" text-anchor="middle" font-family="system-ui,sans-serif">C4 · Vector DB (Qdrant)</text>
+<text font-size="10" fill="#185FA5" x="377" y="177" text-anchor="middle" font-family="system-ui,sans-serif">always on · self-managed or cloud</text>
+<text font-size="10" fill="#042C53" x="377" y="196" text-anchor="middle" font-family="system-ui,sans-serif">Active index · Snapshots → Blob store</text>
+
+<!-- C5 -->
+<rect x="622" y="24" width="218" height="100" rx="10" fill="#EEEDFE" stroke="#7F77DD" stroke-width="1.2"/>
+<text font-size="11" font-weight="600" fill="#26215C" x="731" y="44" text-anchor="middle" font-family="system-ui,sans-serif">C5 · Chabo Orchestration</text>
+<text font-size="10" fill="#3C3489" x="731" y="58" text-anchor="middle" font-family="system-ui,sans-serif">always on · CPU · HF Spaces</text>
+<rect x="634" y="66" width="90" height="46" rx="6" fill="white" stroke="#7F77DD" stroke-width="0.5"/>
+<text font-size="10" fill="#26215C" x="679" y="84" text-anchor="middle" font-family="system-ui,sans-serif">FastAPI</text>
+<text font-size="10" fill="#26215C" x="679" y="97" text-anchor="middle" font-family="system-ui,sans-serif">LangGraph</text>
+<rect x="732" y="66" width="96" height="46" rx="6" fill="white" stroke="#7F77DD" stroke-width="0.5"/>
+<text font-size="10" fill="#26215C" x="780" y="80" text-anchor="middle" font-family="system-ui,sans-serif">Query rewriter</text>
+<text font-size="10" fill="#26215C" x="780" y="93" text-anchor="middle" font-family="system-ui,sans-serif">Retriever</text>
+<text font-size="10" fill="#26215C" x="780" y="106" text-anchor="middle" font-family="system-ui,sans-serif">Reranker · Generator</text>
+
+<!-- C6 -->
+<rect x="622" y="144" width="218" height="78" rx="10" fill="#FAECE7" stroke="#D85A30" stroke-width="1.2"/>
+<text font-size="11" font-weight="600" fill="#4A1B0C" x="731" y="163" text-anchor="middle" font-family="system-ui,sans-serif">C6 · ChatUI Frontend</text>
+<text font-size="10" fill="#993C1D" x="731" y="177" text-anchor="middle" font-family="system-ui,sans-serif">always on · CPU · HF Spaces</text>
+<text font-size="10" fill="#4A1B0C" x="731" y="196" text-anchor="middle" font-family="system-ui,sans-serif">Chat interface · MongoDB (conversation history)</text>
+
+<!-- C5 ↔ C6 -->
+<line x1="731" y1="124" x2="731" y2="142" stroke="#D85A30" stroke-width="1.2" marker-end="url(#sa-c)"/>
+<line x1="711" y1="142" x2="711" y2="124" stroke="#D85A30" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#sa-c)"/>
+
+<!-- ══ EXTERNAL HOSTED SERVICES ════════════════════════════════ -->
+
+<!-- Blob store -->
+<rect x="268" y="252" width="218" height="62" rx="10" fill="#E6F1FB" stroke="#378ADD" stroke-width="1" stroke-dasharray="5 3"/>
+<text font-size="10" font-weight="500" fill="#185FA5" x="300" y="268" font-family="system-ui,sans-serif">Blob store (Azure / HF Xet)</text>
+<text font-size="10" fill="#042C53" x="377" y="284" text-anchor="middle" font-family="system-ui,sans-serif">/raw-documents · /parquet · /snapshots</text>
+<text font-size="9" fill="#888780" x="377" y="304" text-anchor="middle" font-family="system-ui,sans-serif">hosted storage</text>
+
+<!-- LLM service -->
+<rect x="622" y="252" width="218" height="90" rx="10" fill="#EEEDFE" stroke="#7F77DD" stroke-width="1" stroke-dasharray="5 3"/>
+<text font-size="10" font-weight="500" fill="#3C3489" x="654" y="268" font-family="system-ui,sans-serif">LLM service</text>
+<text font-size="10" fill="#26215C" x="731" y="284" text-anchor="middle" font-family="system-ui,sans-serif">API provider (Novita · Cohere · Anthropic)</text>
+<text font-size="10" fill="#26215C" x="731" y="298" text-anchor="middle" font-family="system-ui,sans-serif">or self-hosted (Karnak · Qwen · Llama)</text>
+<text font-size="10" fill="#26215C" x="731" y="312" text-anchor="middle" font-family="system-ui,sans-serif">or IT / govt hosted endpoint</text>
+<text font-size="9" fill="#888780" x="731" y="330" text-anchor="middle" font-family="system-ui,sans-serif">external service</text>
+
+<!-- Embedding provider (optional) -->
+<rect x="268" y="334" width="218" height="62" rx="10" fill="#E1F5EE" stroke="#1D9E75" stroke-width="1" stroke-dasharray="5 3"/>
+<text font-size="10" font-weight="500" fill="#085041" x="300" y="350" font-family="system-ui,sans-serif">Embedding provider (optional)</text>
+<text font-size="10" fill="#04342C" x="377" y="366" text-anchor="middle" font-family="system-ui,sans-serif">Cohere · Voyage · HF Inference API</text>
+<text font-size="9" fill="#888780" x="377" y="386" text-anchor="middle" font-family="system-ui,sans-serif">replaces C3 if self-hosting not preferred</text>
+
+<!-- ══ FLOW ARROWS ════════════════════════════════════════════ -->
+
+<!-- C2 → C3 (embed call) -->
+<line x1="234" y1="174" x2="266" y2="90" stroke="#1D9E75" stroke-width="1.2" marker-end="url(#sa-t)"/>
+<text font-size="9" fill="#085041" x="244" y="130" font-family="system-ui,sans-serif">embed</text>
+
+<!-- C2 → C4 (ingest) -->
+<line x1="234" y1="196" x2="266" y2="180" stroke="#378ADD" stroke-width="1.2" marker-end="url(#sa-b)"/>
+<text font-size="9" fill="#185FA5" x="238" y="192" font-family="system-ui,sans-serif">ingest</text>
+
+<!-- C2 → Blob (parquet) -->
+<line x1="125" y1="222" x2="320" y2="252" stroke="#378ADD" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#sa-b)"/>
+<text font-size="9" fill="#185FA5" x="188" y="244" font-family="system-ui,sans-serif">parquet</text>
+
+<!-- C5 → C3 (embed + rerank calls) -->
+<line x1="622" y1="74" x2="488" y2="74" stroke="#1D9E75" stroke-width="1.2" marker-end="url(#sa-t)"/>
+<text font-size="9" fill="#085041" x="530" y="68" font-family="system-ui,sans-serif">embed · rerank</text>
+
+<!-- C5 → C4 (Qdrant search) -->
+<line x1="622" y1="74" x2="488" y2="174" stroke="#378ADD" stroke-width="1.2" marker-end="url(#sa-b)"/>
+<text font-size="9" fill="#185FA5" x="524" y="118" font-family="system-ui,sans-serif">search</text>
+
+<!-- C5 → LLM -->
+<line x1="840" y1="124" x2="840" y2="250" stroke="#7F77DD" stroke-width="1.2" marker-end="url(#sa-p)"/>
+<text font-size="9" fill="#3C3489" x="844" y="192" font-family="system-ui,sans-serif">rewrite · filter · generate</text>
+
+<!-- C4 → Blob (snapshots) -->
+<line x1="377" y1="222" x2="377" y2="250" stroke="#378ADD" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#sa-b)"/>
+
+<!-- ══ CONTAINER KEY ══════════════════════════════════════════ -->
+<rect x="16" y="410" width="920" height="96" rx="8" fill="none" stroke="#D3D1C7" stroke-width="0.5"/>
+<text font-size="10" font-weight="500" fill="#5F5E5A" x="28" y="426" font-family="system-ui,sans-serif">Container map</text>
+
+<!-- row 1 -->
+<rect x="28"  y="434" width="10" height="10" rx="2" fill="#FAEEDA" stroke="#EF9F27" stroke-width="0.8"/>
+<text font-size="9" fill="#2C2C2A" x="44"  y="443" font-family="system-ui,sans-serif">C1 Doc Console · always on · CPU</text>
+<rect x="218" y="434" width="10" height="10" rx="2" fill="#FAEEDA" stroke="#EF9F27" stroke-width="0.8"/>
+<text font-size="9" fill="#2C2C2A" x="234" y="443" font-family="system-ui,sans-serif">C2 Doc Worker · on-demand · GPU</text>
+<rect x="428" y="434" width="10" height="10" rx="2" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+<text font-size="9" fill="#2C2C2A" x="444" y="443" font-family="system-ui,sans-serif">C3 Embedding/Retrieval · always on · CPU or GPU</text>
+<rect x="698" y="434" width="10" height="10" rx="2" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.8"/>
+<text font-size="9" fill="#2C2C2A" x="714" y="443" font-family="system-ui,sans-serif">C4 Vector DB · always on</text>
+
+<!-- row 2 -->
+<rect x="28"  y="456" width="10" height="10" rx="2" fill="#EEEDFE" stroke="#7F77DD" stroke-width="0.8"/>
+<text font-size="9" fill="#2C2C2A" x="44"  y="465" font-family="system-ui,sans-serif">C5 Orchestration · always on · CPU</text>
+<rect x="218" y="456" width="10" height="10" rx="2" fill="#FAECE7" stroke="#D85A30" stroke-width="0.8"/>
+<text font-size="9" fill="#2C2C2A" x="234" y="465" font-family="system-ui,sans-serif">C6 ChatUI Frontend · always on · CPU</text>
+<rect x="428" y="456" width="10" height="10" rx="2" fill="none" stroke="#7F77DD" stroke-width="0.8" stroke-dasharray="3 2"/>
+<text font-size="9" fill="#2C2C2A" x="444" y="465" font-family="system-ui,sans-serif">LLM service · API / self-hosted / institutional</text>
+<rect x="698" y="456" width="10" height="10" rx="2" fill="none" stroke="#1D9E75" stroke-width="0.8" stroke-dasharray="3 2"/>
+<text font-size="9" fill="#2C2C2A" x="714" y="465" font-family="system-ui,sans-serif">Embedding provider · optional swap for C3</text>
+
+<!-- row 3: arrow legend -->
+<line x1="28"  y1="483" x2="48"  y2="483" stroke="#BA7517" stroke-width="1.5" marker-end="url(#sa-a)"/>
+<text font-size="9" fill="#2C2C2A" x="54"  y="487" font-family="system-ui,sans-serif">Ingestion flow</text>
+<line x1="178" y1="483" x2="198" y2="483" stroke="#1D9E75" stroke-width="1.5" marker-end="url(#sa-t)"/>
+<text font-size="9" fill="#2C2C2A" x="204" y="487" font-family="system-ui,sans-serif">Embed / rerank call</text>
+<line x1="338" y1="483" x2="358" y2="483" stroke="#378ADD" stroke-width="1.5" marker-end="url(#sa-b)"/>
+<text font-size="9" fill="#2C2C2A" x="364" y="487" font-family="system-ui,sans-serif">Vector DB / storage</text>
+<line x1="498" y1="483" x2="518" y2="483" stroke="#7F77DD" stroke-width="1.5" marker-end="url(#sa-p)"/>
+<text font-size="9" fill="#2C2C2A" x="524" y="487" font-family="system-ui,sans-serif">Query pipeline / LLM call</text>
+<line x1="678" y1="483" x2="698" y2="483" stroke="#D85A30" stroke-width="1.5" marker-end="url(#sa-c)"/>
+<text font-size="9" fill="#2C2C2A" x="704" y="487" font-family="system-ui,sans-serif">User request / response</text>
+<line x1="848" y1="483" x2="868" y2="483" stroke="#888780" stroke-width="1" stroke-dasharray="4 2"/>
+<text font-size="9" fill="#888780" x="874" y="487" font-family="system-ui,sans-serif">Optional / backup</text>
+
+</svg>
+</div>
+
+<h2>Architecture flow diagram</h2>
+<div style="width:100%;overflow-x:auto;margin-bottom:2rem">
+<svg width="100%" viewBox="0 0 1200 760" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Chabo architecture — three column layout: offline pipeline, shared services, query runtime</title>
+<desc>Left column: document processing (C1 console, C2 worker). Middle column: shared services (embedding/retrieval, vector DB, blob store). Right column: query runtime (Chabo orchestration, LLM, frontend).</desc>
+<defs>
+  <marker id="ar"   viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="ar-t" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#1D9E75" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="ar-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#7F77DD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="ar-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#BA7517" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="ar-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#D85A30" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="ar-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#639922" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  <marker id="ar-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#378ADD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<!-- column labels -->
+<text class="tc" x="200" y="18" text-anchor="middle" font-weight="500">Offline / upstream pipeline</text>
+<text class="tc" x="600" y="18" text-anchor="middle" font-weight="500">Shared services</text>
+<text class="tc" x="1000" y="18" text-anchor="middle" font-weight="500">Query runtime</text>
+<line x1="400" y1="8" x2="400" y2="730" stroke="var(--color-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
+<line x1="800" y1="8" x2="800" y2="730" stroke="var(--color-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
+
+<!-- ══ LEFT COL: Document processing ══════════════════════════════ -->
+<rect x="14" y="26" width="372" height="690" rx="12" fill="none" stroke="#EF9F27" stroke-width="0.8" stroke-dasharray="6 3"/>
+<text class="ts" x="26" y="42" fill="#BA7517" font-weight="500">Document processing pipeline</text>
+
+<!-- C1 box -->
+<rect x="22" y="50" width="356" height="298" rx="8" fill="none" stroke="#EF9F27" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.6"/>
+<text class="tc" x="200" y="59" text-anchor="middle" fill="#BA7517">C1 · Document Management Console</text><text class="tc" x="200" y="70" text-anchor="middle" fill="#BA7517">always on · CPU · web + Postgres + blob</text>
+
+<g class="c-amber"><rect x="32" y="72" width="156" height="36" rx="6" stroke-width="0.5"/><text class="th" x="110" y="87" text-anchor="middle">Upload + lifecycle mgmt</text><text class="ts" x="110" y="100" text-anchor="middle">upload · delete · replace docs</text></g>
+<g class="c-amber"><rect x="200" y="72" width="168" height="36" rx="6" stroke-width="0.5"/><text class="th" x="284" y="87" text-anchor="middle">Document lifecycle</text><text class="ts" x="284" y="100" text-anchor="middle">delete/replace by document_id</text></g>
+<g class="c-amber"><rect x="32" y="120" width="160" height="36" rx="6" stroke-width="0.5"/><text class="th" x="112" y="135" text-anchor="middle">Chunk viewer / editor</text><text class="ts" x="112" y="148" text-anchor="middle">proofread · fix extraction</text></g>
+<g class="c-amber"><rect x="204" y="120" width="164" height="36" rx="6" stroke-width="0.5"/><text class="th" x="286" y="135" text-anchor="middle">Metadata editor</text><text class="ts" x="286" y="148" text-anchor="middle">per chunk · taxonomy-driven</text></g>
+<rect x="32" y="168" width="164" height="36" rx="6" fill="none" stroke="#639922" stroke-width="1.2"/>
+<text class="th" x="114" y="183" text-anchor="middle" fill="#27500A">✓ Approval gate</text>
+<text class="ts" x="114" y="196" text-anchor="middle" fill="#3B6D11">human sign-off required</text>
+<g class="c-blue"><rect x="32" y="218" width="90" height="28" rx="6" stroke-width="0.5"/><text class="th" x="77" y="230" text-anchor="middle">Postgres</text><text class="ts" x="77" y="241" text-anchor="middle">state · audit · registry</text></g>
+<g class="c-blue"><rect x="132" y="218" width="90" height="28" rx="6" stroke-width="0.5"/><text class="th" x="177" y="230" text-anchor="middle">Raw doc store</text><text class="ts" x="177" y="241" text-anchor="middle">blob · originals</text></g>
+
+<!-- C1 internal arrows -->
+<line x1="110" y1="108" x2="110" y2="118" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<line x1="284" y1="108" x2="284" y2="118" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<line x1="160" y1="138" x2="202" y2="138" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<line x1="200" y1="156" x2="160" y2="166" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<!-- upload → raw doc store -->
+<line x1="110" y1="108" x2="177" y2="216" stroke="#378ADD" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar-b)"/>
+<!-- upload → triggers C2 -->
+<line x1="156" y1="90" x2="200" y2="90" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+
+<!-- C2 box -->
+<rect x="22" y="360" width="356" height="348" rx="8" fill="none" stroke="#EF9F27" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.6"/>
+<text class="tc" x="200" y="370" text-anchor="middle" fill="#BA7517">C2 · Document Processing Worker</text><text class="tc" x="200" y="381" text-anchor="middle" fill="#BA7517">on-demand · GPU · Azure ML</text>
+
+<!-- C1 approval → C2 triggers label -->
+<line x1="114" y1="204" x2="114" y2="358" stroke="#639922" stroke-width="1" marker-end="url(#ar-g)"/>
+<text class="tc" x="122" y="286" fill="#3B6D11">triggers</text>
+<!-- C1 upload → C2 extraction -->
+<line x1="200" y1="260" x2="200" y2="358" stroke="#BA7517" stroke-width="1" marker-end="url(#ar-a)"/>
+<text class="tc" x="208" y="314" fill="#BA7517">triggers</text>
+
+<g class="c-amber"><rect x="32" y="384" width="148" height="36" rx="6" stroke-width="0.5"/><text class="th" x="106" y="399" text-anchor="middle">Docling 2</text><text class="ts" x="106" y="412" text-anchor="middle">primary · HybridChunker</text></g>
+<text class="tc" x="196" y="405" text-anchor="middle" fill="#BA7517">or</text>
+<g class="c-gray"><rect x="210" y="384" width="158" height="36" rx="6" stroke-width="0.5" stroke-dasharray="3 2"/><text class="th" x="289" y="396" text-anchor="middle">VLM extractor</text><text class="ts" x="289" y="408" text-anchor="middle">Qwen2.5-VL · optional</text><text class="ts" x="289" y="419" text-anchor="middle">replaces Docling</text></g>
+
+<g class="c-amber"><rect x="32" y="434" width="148" height="36" rx="6" stroke-width="0.5"/><text class="th" x="106" y="449" text-anchor="middle">Text normalisation</text><text class="ts" x="106" y="462" text-anchor="middle">custom pre-processing</text></g>
+<g class="c-amber"><rect x="192" y="434" width="176" height="36" rx="6" stroke-width="0.5"/><text class="th" x="280" y="449" text-anchor="middle">Chunk enrichment</text><text class="ts" x="280" y="462" text-anchor="middle">header · custom logic</text></g>
+
+<!-- C2 feedback → C1 chunk viewer -->
+<path d="M32 452 L20 452 L20 138 L30 138" fill="none" stroke="#BA7517" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar-a)"/>
+
+<g class="c-amber"><rect x="32" y="484" width="156" height="36" rx="6" stroke-width="0.5"/><text class="th" x="110" y="499" text-anchor="middle">Call embed service</text><text class="ts" x="110" y="512" text-anchor="middle">→ 1024-dim vectors</text></g>
+<g class="c-amber"><rect x="200" y="484" width="168" height="36" rx="6" stroke-width="0.5"/><text class="th" x="284" y="499" text-anchor="middle">Parquet writer</text><text class="ts" x="284" y="512" text-anchor="middle">vector + payload → blob</text></g>
+<g class="c-amber"><rect x="32" y="534" width="336" height="36" rx="6" stroke-width="0.5"/><text class="th" x="200" y="549" text-anchor="middle">upload_parquet.py → Qdrant</text><text class="ts" x="200" y="562" text-anchor="middle">single exit → document processing</text></g>
+
+<!-- C2 internal arrows -->
+<line x1="106" y1="420" x2="106" y2="432" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<line x1="289" y1="420" x2="289" y2="432" stroke="#888780" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar)"/>
+<line x1="106" y1="470" x2="106" y2="482" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<line x1="280" y1="470" x2="280" y2="482" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<line x1="188" y1="502" x2="198" y2="502" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<line x1="284" y1="520" x2="284" y2="532" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+<line x1="110" y1="520" x2="110" y2="532" stroke="#BA7517" stroke-width="0.8" marker-end="url(#ar-a)"/>
+
+<!-- C2 → embed service (→ middle col) -->
+<line x1="188" y1="502" x2="416" y2="192" stroke="#1D9E75" stroke-width="1" marker-end="url(#ar-t)"/>
+<!-- C2 upload → Qdrant (→ middle col) -->
+<line x1="368" y1="552" x2="416" y2="400" stroke="#1D9E75" stroke-width="1.2" marker-end="url(#ar-t)"/>
+<!-- Parquet → blob store (→ middle col) -->
+<line x1="368" y1="502" x2="416" y2="570" stroke="#378ADD" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar-b)"/>
+
+<!-- ══ MIDDLE COL: Shared services ════════════════════════════════ -->
+
+<!-- Embedding/Retrieval service -->
+<rect x="414" y="26" width="372" height="240" rx="12" fill="none" stroke="#1D9E75" stroke-width="0.8" stroke-dasharray="6 3"/>
+<text class="ts" x="426" y="42" fill="#085041" font-weight="500">Embedding / Retrieval service — shared · always on</text>
+
+<!-- Option A self-managed — single container -->
+<rect x="422" y="50" width="172" height="206" rx="8" fill="none" stroke="#1D9E75" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.6"/>
+<text class="tc" x="508" y="61" text-anchor="middle" fill="#085041">C3 . self-managed · single container</text>
+<text class="tc" x="508" y="71" text-anchor="middle" fill="#085041">CPU or GPU · scales with model</text>
+<g class="c-teal"><rect x="430" y="78" width="156" height="44" rx="6" stroke-width="0.5"/><text class="th" x="508" y="94" text-anchor="middle">Embedding model</text><text class="ts" x="508" y="106" text-anchor="middle">current: BGE-M3 · 1024-dim</text><text class="ts" x="508" y="118" text-anchor="middle">CPU viable · swappable</text></g>
+<g class="c-teal"><rect x="430" y="132" width="156" height="44" rx="6" stroke-width="0.5"/><text class="th" x="508" y="148" text-anchor="middle">Reranker model</text><text class="ts" x="508" y="158" text-anchor="middle">cross-encoder</text><text class="ts" x="508" y="172" text-anchor="middle">GPU strongly recommended</text></g>
+<text class="tc" x="508" y="196" text-anchor="middle" fill="#085041">one TEI container per model</text>
+
+<!-- Option B provider -->
+<rect x="606" y="50" width="172" height="206" rx="8" fill="none" stroke="#1D9E75" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.6"/>
+<text class="tc" x="692" y="61" text-anchor="middle" fill="#085041">embedding service provider</text>
+<text class="tc" x="692" y="71" text-anchor="middle" fill="#085041">open-source models via API</text>
+<rect x="614" y="78" width="156" height="42" rx="6" fill="none" stroke="#1D9E75" stroke-width="0.5" stroke-dasharray="4 2"/>
+<text class="th" x="692" y="94" text-anchor="middle" fill="#085041">Embedding API</text>
+<text class="ts" x="692" y="106" text-anchor="middle" fill="#1D9E75">Cohere · Voyage · HF Inference</text>
+<text class="ts" x="692" y="117" text-anchor="middle" fill="#1D9E75">or any compatible endpoint</text>
+<rect x="614" y="130" width="156" height="42" rx="6" fill="none" stroke="#1D9E75" stroke-width="0.5" stroke-dasharray="4 2"/>
+<text class="th" x="692" y="146" text-anchor="middle" fill="#085041">Reranking API</text>
+<text class="ts" x="692" y="158" text-anchor="middle" fill="#1D9E75">Cohere Rerank</text>
+<text class="ts" x="692" y="169" text-anchor="middle" fill="#1D9E75">or compatible provider</text>
+
+<text class="tc" x="600" y="228" text-anchor="middle" fill="#085041">shared: serves C2 batch ingestion + query-time pipeline</text><text class="tc" x="600" y="238" text-anchor="middle" fill="#085041">model swap requires re-embedding all chunks</text>
+
+<!-- Vector DB service -->
+<rect x="414" y="280" width="372" height="180" rx="12" fill="none" stroke="#378ADD" stroke-width="0.8" stroke-dasharray="6 3"/>
+<text class="ts" x="426" y="296" fill="#185FA5" font-weight="500">Vector DB service — always on</text>
+
+<!-- self-managed -->
+<rect x="422" y="304" width="172" height="146" rx="8" fill="none" stroke="#378ADD" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.6"/>
+<text class="tc" x="508" y="317" text-anchor="middle" fill="#185FA5">C4 . CPU . self-managed</text>
+<g class="c-blue"><rect x="430" y="322" width="156" height="38" rx="6" stroke-width="0.5"/><text class="th" x="508" y="338" text-anchor="middle">Qdrant instance</text><text class="ts" x="508" y="350" text-anchor="middle">active index · HF Spaces</text></g>
+<g class="c-blue"><rect x="430" y="368" width="156" height="38" rx="6" stroke-width="0.5"/><text class="th" x="508" y="384" text-anchor="middle">Snapshots</text><text class="ts" x="508" y="396" text-anchor="middle">blob · /tmp on startup</text></g>
+<line x1="508" y1="360" x2="508" y2="366" stroke="#378ADD" stroke-width="0.8" marker-end="url(#ar-b)"/>
+
+<!-- managed provider -->
+<rect x="606" y="304" width="172" height="146" rx="8" fill="none" stroke="#378ADD" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.6"/>
+<text class="tc" x="692" y="317" text-anchor="middle" fill="#185FA5">managed provider</text>
+<rect x="614" y="322" width="156" height="38" rx="6" fill="none" stroke="#378ADD" stroke-width="0.5" stroke-dasharray="4 2"/>
+<text class="th" x="692" y="338" text-anchor="middle" fill="#185FA5">Qdrant Cloud</text>
+<text class="ts" x="692" y="350" text-anchor="middle" fill="#378ADD">or Pinecone · Weaviate</text>
+<text class="tc" x="692" y="380" text-anchor="middle" fill="#185FA5">provider handles</text>
+<text class="tc" x="692" y="392" text-anchor="middle" fill="#185FA5">persistence · no snapshots</text>
+<text class="tc" x="692" y="404" text-anchor="middle" fill="#185FA5">needed</text>
+
+<!-- Blob store -->
+<rect x="414" y="476" width="372" height="90" rx="12" fill="none" stroke="#378ADD" stroke-width="0.8" stroke-dasharray="6 3"/>
+<text class="ts" x="426" y="492" fill="#185FA5" font-weight="500">Blob store — persistent storage</text>
+<g class="c-blue"><rect x="422" y="500" width="100" height="38" rx="6" stroke-width="0.5"/><text class="th" x="472" y="516" text-anchor="middle">/raw-documents</text><text class="ts" x="472" y="528" text-anchor="middle">uploaded originals</text></g>
+<g class="c-blue"><rect x="534" y="500" width="100" height="38" rx="6" stroke-width="0.5"/><text class="th" x="584" y="516" text-anchor="middle">/parquet</text><text class="ts" x="584" y="528" text-anchor="middle">embedding backup</text></g>
+<g class="c-blue"><rect x="646" y="500" width="132" height="38" rx="6" stroke-width="0.5"/><text class="th" x="712" y="516" text-anchor="middle">/snapshots</text><text class="ts" x="712" y="528" text-anchor="middle">Qdrant RocksDB state</text></g>
+
+<!-- Snapshots → blob -->
+<line x1="508" y1="406" x2="584" y2="498" stroke="#378ADD" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar-b)"/>
+
+<!-- ══ RIGHT COL: Query runtime ════════════════════════════════════ -->
+
+<!-- Chabo orchestration -->
+<rect x="814" y="26" width="372" height="380" rx="12" fill="none" stroke="#7F77DD" stroke-width="0.8" stroke-dasharray="6 3"/>
+<text class="ts" x="826" y="42" fill="#3C3489" font-weight="500">C5 - Chabo orchestration — FastAPI + LangGraph · HF Spaces · always on</text>
+
+<g class="c-purple"><rect x="826" y="52" width="156" height="38" rx="8" stroke-width="0.5"/><text class="th" x="904" y="68" text-anchor="middle">FastAPI</text><text class="ts" x="904" y="81" text-anchor="middle">LangServe · :7860</text></g>
+<g class="c-purple"><rect x="996" y="52" width="180" height="38" rx="8" stroke-width="0.5"/><text class="th" x="1086" y="68" text-anchor="middle">LangGraph</text><text class="ts" x="1086" y="81" text-anchor="middle">pipeline orchestrator</text></g>
+<line x1="982" y1="71" x2="994" y2="71" stroke="#7F77DD" stroke-width="1" marker-end="url(#ar-p)"/>
+
+<!-- Row 1: Query rewriter + Filter extraction — parallel LLM calls -->
+<text class="tc" x="1000" y="106" text-anchor="middle" fill="#888780">parallel LLM calls · both use conv. context</text>
+<g class="c-purple"><rect x="826" y="112" width="200" height="44" rx="6" stroke-width="0.5"/><text class="th" x="926" y="128" text-anchor="middle">Query rewriter</text><text class="ts" x="926" y="140" text-anchor="middle">LLM call · rewrites query</text><text class="ts" x="926" y="151" text-anchor="middle">using conv. context</text></g>
+<g class="c-gray"><rect x="1042" y="112" width="132" height="44" rx="6" stroke-width="0.5" stroke-dasharray="3 2"/><text class="th" x="1108" y="128" text-anchor="middle">Filter extraction</text><text class="ts" x="1108" y="140" text-anchor="middle">LLM call · optional</text><text class="ts" x="1108" y="151" text-anchor="middle">using conv. context</text></g>
+
+<!-- Row 2: Retriever — uses rewritten query + filters -->
+<g class="c-purple"><rect x="826" y="178" width="348" height="44" rx="6" stroke-width="0.5"/><text class="th" x="1000" y="194" text-anchor="middle">Retriever</text><text class="ts" x="1000" y="204" text-anchor="middle">embed query → embed svc · apply filters</text><text class="ts" x="1000" y="215" text-anchor="middle">Qdrant search → top-20</text></g>
+
+<!-- Row 3: Reranker -->
+<g class="c-purple"><rect x="826" y="244" width="348" height="40" rx="6" stroke-width="0.5"/><text class="th" x="1000" y="260" text-anchor="middle">Reranker</text><text class="ts" x="1000" y="273" text-anchor="middle">cross-encoder scoring → top-5</text></g>
+
+<!-- Row 4: Generator -->
+<g class="c-purple"><rect x="826" y="306" width="348" height="40" rx="6" stroke-width="0.5"/><text class="th" x="1000" y="322" text-anchor="middle">Generator</text><text class="ts" x="1000" y="335" text-anchor="middle">stream · citations · uses conv. context</text></g>
+
+<!-- Context window -->
+<g class="c-gray"><rect x="826" y="368" width="348" height="36" rx="6" stroke-width="0.5"/><text class="th" x="1000" y="383" text-anchor="middle">Context window (per request)</text><text class="ts" x="1000" y="393" text-anchor="middle">3 turns · 8000 chars</text><text class="ts" x="1000" y="404" text-anchor="middle">slice from ChatUI MongoDB</text></g>
+
+<!-- pipeline arrows -->
+<line x1="1086" y1="90" x2="926" y2="110" stroke="#7F77DD" stroke-width="0.8" marker-end="url(#ar-p)"/>
+<line x1="1086" y1="90" x2="1108" y2="110" stroke="#7F77DD" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar-p)"/>
+<!-- rewriter + filter → retriever (both feed in) -->
+<line x1="926" y1="156" x2="960" y2="176" stroke="#7F77DD" stroke-width="0.8" marker-end="url(#ar-p)"/>
+<line x1="1108" y1="156" x2="1040" y2="176" stroke="#7F77DD" stroke-width="0.8" marker-end="url(#ar-p)"/>
+<!-- retriever → reranker -->
+<line x1="1000" y1="222" x2="1000" y2="242" stroke="#7F77DD" stroke-width="0.8" marker-end="url(#ar-p)"/>
+<!-- reranker → generator -->
+<line x1="1000" y1="284" x2="1000" y2="304" stroke="#7F77DD" stroke-width="0.8" marker-end="url(#ar-p)"/>
+<!-- context → rewriter, filter, generator (dashed) -->
+<line x1="880" y1="368" x2="880" y2="334" stroke="#888780" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar)"/>
+<line x1="920" y1="368" x2="1108" y2="158" stroke="#888780" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar)"/>
+<line x1="1150" y1="368" x2="1150" y2="346" stroke="#888780" stroke-width="0.8" stroke-dasharray="3 2"/>
+<line x1="1150" y1="346" x2="1174" y2="346" stroke="#888780" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+<!-- rewriter + filter → LLM service (both are LLM calls) -->
+<line x1="1000" y1="420" x2="1000" y2="420" stroke="#7F77DD" stroke-width="0.8"/>
+
+<!-- Orch → shared services -->
+<!-- retriever → embed service -->
+<line x1="826" y1="192" x2="806" y2="192" stroke="#1D9E75" stroke-width="1"/>
+<line x1="806" y1="192" x2="806" y2="34" stroke="#1D9E75" stroke-width="1"/>
+<line x1="806" y1="34" x2="500" y2="34" stroke="#1D9E75" stroke-width="1"/>
+<line x1="500" y1="34" x2="500" y2="76" stroke="#1D9E75" stroke-width="1" marker-end="url(#ar-t)"/>
+<!-- retriever → Qdrant -->
+<line x1="826" y1="208" x2="816" y2="208" stroke="#378ADD" stroke-width="1"/>
+<line x1="816" y1="208" x2="816" y2="46" stroke="#378ADD" stroke-width="1"/>
+<line x1="816" y1="46" x2="414" y2="46" stroke="#378ADD" stroke-width="1"/>
+<line x1="414" y1="46" x2="414" y2="341" stroke="#378ADD" stroke-width="1"/>
+<line x1="414" y1="341" x2="430" y2="341" stroke="#378ADD" stroke-width="1" marker-end="url(#ar-b)"/>
+<!-- reranker → reranker model -->
+<line x1="826" y1="262" x2="820" y2="262" stroke="#1D9E75" stroke-width="1"/>
+<line x1="820" y1="262" x2="820" y2="40" stroke="#1D9E75" stroke-width="1"/>
+<line x1="820" y1="40" x2="516" y2="40" stroke="#1D9E75" stroke-width="1"/>
+<line x1="516" y1="40" x2="516" y2="130" stroke="#1D9E75" stroke-width="1" marker-end="url(#ar-t)"/>
+<!-- query rewriter → LLM service -->
+<line x1="926" y1="156" x2="880" y2="451" stroke="#7F77DD" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar-p)"/>
+<!-- filter extraction → LLM service -->
+<line x1="1108" y1="156" x2="1116" y2="451" stroke="#7F77DD" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ar-p)"/>
+<!-- generator → LLM service -->
+<line x1="1000" y1="346" x2="998" y2="451" stroke="#7F77DD" stroke-width="1" marker-end="url(#ar-p)"/>
+
+<!-- LLM service -->
+<rect x="814" y="422" width="372" height="98" rx="12" fill="none" stroke="#7F77DD" stroke-width="0.8" stroke-dasharray="6 3"/>
+<text class="ts" x="826" y="436" fill="#3C3489" font-weight="500">LLM service — always on</text>
+<!-- LLM: three options side by side — 114px each with 6px gap -->
+<rect x="826" y="442" width="114" height="68" rx="6" fill="none" stroke="#7F77DD" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.7"/>
+<text class="tc" x="883" y="452" text-anchor="middle" fill="#3C3489">API provider</text>
+<g class="c-purple"><rect x="830" y="456" width="106" height="46" rx="5" stroke-width="0.5"/><text class="th" x="883" y="471" text-anchor="middle">LLM API</text><text class="ts" x="883" y="483" text-anchor="middle">Novita · Cohere</text><text class="ts" x="883" y="495" text-anchor="middle">Anthropic · HF</text></g>
+
+<rect x="946" y="442" width="114" height="68" rx="6" fill="none" stroke="#7F77DD" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.7"/>
+<text class="tc" x="1003" y="452" text-anchor="middle" fill="#3C3489">self-hosted</text>
+<rect x="950" y="456" width="106" height="46" rx="5" fill="none" stroke="#7F77DD" stroke-width="0.5" stroke-dasharray="4 2"/>
+<text class="th" x="1003" y="471" text-anchor="middle" fill="#3C3489">Open source LLM</text>
+<text class="ts" x="1003" y="483" text-anchor="middle" fill="#7F77DD">Karnak · Qwen</text>
+<text class="ts" x="1003" y="495" text-anchor="middle" fill="#7F77DD">Llama · GPU</text>
+
+<rect x="1066" y="442" width="114" height="68" rx="6" fill="none" stroke="#7F77DD" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.7"/>
+<text class="tc" x="1123" y="452" text-anchor="middle" fill="#3C3489">institutional</text>
+<rect x="1070" y="456" width="106" height="46" rx="5" fill="none" stroke="#7F77DD" stroke-width="0.5" stroke-dasharray="4 2"/>
+<text class="th" x="1123" y="471" text-anchor="middle" fill="#3C3489">IT-hosted LLM</text>
+<text class="ts" x="1123" y="483" text-anchor="middle" fill="#7F77DD">Ministry / govt</text>
+<text class="ts" x="1123" y="495" text-anchor="middle" fill="#7F77DD">endpoint</text>
+
+<!-- generate → LLM -->
+
+
+<!-- Frontend -->
+<rect x="814" y="518" width="372" height="80" rx="12" fill="none" stroke="#D85A30" stroke-width="0.8" stroke-dasharray="6 3"/>
+<text class="ts" x="826" y="534" fill="#712B13" font-weight="500">C6 - Frontend — always on</text>
+<g class="c-coral"><rect x="826" y="542" width="348" height="44" rx="8" stroke-width="0.5"/><text class="th" x="1000" y="560" text-anchor="middle">ChatUI</text><text class="ts" x="1000" y="569" text-anchor="middle">HF Spaces · :3000 · $22/mo</text><text class="ts" x="1000" y="581" text-anchor="middle">streams from FastAPI</text></g>
+
+<!-- ChatUI ↔ FastAPI -->
+<line x1="1000" y1="542" x2="904" y2="420" stroke="#D85A30" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#ar-c)"/>
+<line x1="904" y1="420" x2="904" y2="92" stroke="#D85A30" stroke-width="0.8" stroke-dasharray="4 2"/>
+<line x1="826" y1="560" x2="812" y2="560" stroke="#D85A30" stroke-width="1" marker-end="url(#ar-c)"/>
+<line x1="812" y1="560" x2="812" y2="490" stroke="#D85A30" stroke-width="1"/>
+<!-- response back from FastAPI to ChatUI -->
+<path d="M826 71 L806 71 L806 580 L824 580" fill="none" stroke="#D85A30" stroke-width="0.8" stroke-dasharray="4 2" marker-end="url(#ar-c)"/>
+
+<!-- ══ LEGEND ═══════════════════════════════════════════════════ -->
+<rect x="414" y="610" width="772" height="68" rx="8" fill="none" stroke="#D3D1C7" stroke-width="0.5"/>
+<text class="tc" x="426" y="624" font-weight="500">Legend</text>
+<line x1="484" y1="632" x2="510" y2="632" stroke="#BA7517" stroke-width="1.5" marker-end="url(#ar-a)"/>
+<text class="ts" x="516" y="636">Ingestion flow</text>
+<line x1="614" y1="632" x2="640" y2="632" stroke="#1D9E75" stroke-width="1.5" marker-end="url(#ar-t)"/>
+<text class="ts" x="646" y="636">Embed service call</text>
+<line x1="756" y1="632" x2="782" y2="632" stroke="#378ADD" stroke-width="1.5" marker-end="url(#ar-b)"/>
+<text class="ts" x="788" y="632">Vector DB / storage</text>
+<line x1="900" y1="632" x2="926" y2="632" stroke="#7F77DD" stroke-width="1.5" marker-end="url(#ar-p)"/>
+<text class="ts" x="932" y="636">Query pipeline</text>
+<line x1="484" y1="654" x2="510" y2="654" stroke="#D85A30" stroke-width="1.5" marker-end="url(#ar-c)"/>
+<text class="ts" x="516" y="658">User request / response</text>
+<line x1="650" y1="654" x2="676" y2="654" stroke="#639922" stroke-width="1.5" marker-end="url(#ar-g)"/>
+<text class="ts" x="682" y="658">Approval trigger</text>
+<line x1="780" y1="654" x2="806" y2="654" stroke="#888780" stroke-width="1" stroke-dasharray="4 2"/>
+<text class="ts" x="812" y="658" fill="#888780">Optional / fallback</text>
+</svg>
+</div>
+
+<h2>Component reference — click any component for details</h2>
+<div class="legend">
+  <div class="leg"><div class="leg-dot" style="background:#EF9F27"></div>Offline / document processing</div>
+  <div class="leg"><div class="leg-dot" style="background:#1D9E75"></div>Embedding / Retrieval service</div>
+  <div class="leg"><div class="leg-dot" style="background:#378ADD"></div>Vector DB + storage</div>
+  <div class="leg"><div class="leg-dot" style="background:#7F77DD"></div>Query runtime</div>
+  <div class="leg"><div class="leg-dot" style="background:#D85A30"></div>Frontend</div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+
+<!-- LEFT COL panels -->
+<div>
+<div class="col-label">Offline / upstream pipeline</div>
+<div class="zone z-doc" style="margin-bottom:10px">
+  <div class="zone-title" style="color:#BA7517">C1 — Document management console <span class="always-tag tag-on">always on</span> <span class="infra-tag tag-selfhost">CPU · web server</span></div>
+  <div class="comps">
+    <div class="comp c-doc-tag" onclick="show('upload')"><div class="comp-name">Upload + lifecycle mgmt</div><div class="comp-sub">Upload · delete · replace by document_id</div><span class="infra-tag tag-selfhost">web UI</span></div>
+    <div class="comp c-doc-tag" onclick="show('doc-lifecycle')"><div class="comp-name">Document lifecycle</div><div class="comp-sub">Delete/replace — Qdrant filtered delete by document_id</div><span class="infra-tag tag-on">data governance</span></div>
+    <div class="comp c-doc-tag" onclick="show('chunk-viewer')"><div class="comp-name">Chunk viewer / editor</div><div class="comp-sub">Proofread parsed output · fix extraction errors</div><span class="infra-tag tag-selfhost">web UI</span></div>
+    <div class="comp c-doc-tag" onclick="show('meta-editor')"><div class="comp-name">Metadata editor</div><div class="comp-sub">Per-chunk · taxonomy-driven · feeds Qdrant payload</div><span class="infra-tag tag-selfhost">web UI</span></div>
+    <div class="comp c-doc-tag" onclick="show('approval')"><div class="comp-name">Approval gate</div><div class="comp-sub">Human sign-off · triggers C2 embed + ingest</div><span class="infra-tag tag-on">governance gate</span></div>
+    <div class="comp c-doc-tag" onclick="show('postgres')"><div class="comp-name">Postgres</div><div class="comp-sub">Chunk state · doc registry · audit trail</div><span class="infra-tag tag-az">managed · sidecar</span></div>
+    <div class="comp c-doc-tag" onclick="show('raw-store')"><div class="comp-name">Raw doc store</div><div class="comp-sub">Original uploaded files · blob /raw-documents/</div><span class="infra-tag tag-storage">blob storage</span></div>
+  </div>
+</div>
+<div class="zone z-doc">
+  <div class="zone-title" style="color:#BA7517">C2 — Document processing worker <span class="always-tag tag-off">on-demand</span> <span class="infra-tag tag-selfhost">GPU · Azure ML</span></div>
+  <div class="comps">
+    <div class="comp c-doc-tag" onclick="show('docling')"><div class="comp-name">Docling 2</div><div class="comp-sub">Primary extractor · HybridChunker</div><span class="infra-tag tag-selfhost">GPU · Azure ML</span></div>
+    <div class="comp c-doc-tag" onclick="show('vlm')"><div class="comp-name">VLM extractor</div><div class="comp-sub">Replaces Docling on failure · Qwen2.5-VL</div><span class="infra-tag tag-optional">optional · GPU</span></div>
+    <div class="comp c-doc-tag" onclick="show('nfkc')"><div class="comp-name">Text normalisation</div><div class="comp-sub">Custom pre-processing · domain-specific</div><span class="infra-tag tag-selfhost">CPU · in-process</span></div>
+    <div class="comp c-doc-tag" onclick="show('enrichment')"><div class="comp-name">Chunk enrichment</div><div class="comp-sub">Header enrichment · custom logic</div><span class="infra-tag tag-selfhost">CPU · in-process</span></div>
+    <div class="comp c-doc-tag" onclick="show('embed-call')"><div class="comp-name">Call embed service</div><div class="comp-sub">Batch → 1024-dim vectors · no local compute</div><span class="infra-tag tag-selfhost">CPU · delegates to embed service</span></div>
+    <div class="comp c-doc-tag" onclick="show('parquet')"><div class="comp-name">Parquet writer</div><div class="comp-sub">vector + payload → blob /parquet/</div><span class="infra-tag tag-storage">blob storage</span></div>
+    <div class="comp c-doc-tag" onclick="show('qdrant-upload')"><div class="comp-name">upload_parquet.py</div><div class="comp-sub">Single exit → Qdrant collection</div><span class="infra-tag tag-selfhost">CPU · in-process</span></div>
+  </div>
+</div>
+</div>
+
+<!-- MIDDLE COL panels -->
+<div>
+<div class="col-label">Shared services</div>
+<div class="zone z-mid" style="margin-bottom:10px">
+  <div class="zone-title" style="color:#085041">Embedding / Retrieval service <span class="always-tag tag-on">always on</span></div>
+  <div class="sect-label">C3 - Self-managed <span class="infra-tag tag-selfhost">TEI / HF endpoint</span></div>
+  <div class="comps" style="margin-bottom:8px">
+    <div class="comp c-mid-tag" onclick="show('bge-m3')"><div class="comp-name">Embedding model</div><div class="comp-sub">Current: BGE-M3 · bi-encoder · CPU viable (some latency) or GPU · swappable model</div><span class="infra-tag tag-selfhost">CPU or GPU · same container as reranker</span></div>
+    <div class="comp c-mid-tag" onclick="show('reranker')"><div class="comp-name">Reranker model</div><div class="comp-sub">Current: BGE-reranker · cross-encoder · compute-intensive · GPU strongly recommended · scales with traffic</div><span class="infra-tag tag-selfhost">GPU · same container as embedder</span></div>
+  </div>
+  <div class="sect-label">External provider <span class="infra-tag tag-optional">swap-in</span></div>
+  <div class="comps">
+    <div class="comp c-mid-tag" onclick="show('ext-embed')"><div class="comp-name">Embedding service provider</div><div class="comp-sub">Cohere · Voyage · HF Inference API · any compatible endpoint</div><span class="infra-tag tag-cloud">API-based · open-source models</span></div>
+  </div>
+</div>
+<div class="zone z-mid" style="margin-bottom:10px">
+  <div class="zone-title" style="color:#185FA5">Vector DB service <span class="always-tag tag-on">always on</span></div>
+  <div class="sect-label">c4 - Self-managed <span class="infra-tag tag-selfhost">HF Spaces · $22/mo</span></div>
+  <div class="comps" style="margin-bottom:8px">
+    <div class="comp c-mid-tag" onclick="show('qdrant')"><div class="comp-name">Qdrant instance</div><div class="comp-sub">Active index · native · single ingest entry from C2</div><span class="infra-tag tag-selfhost">HF Spaces</span></div>
+    <div class="comp c-mid-tag" onclick="show('qdrant-snap')"><div class="comp-name">Snapshots</div><div class="comp-sub">Blob /snapshots/ · restored to /tmp on startup</div><span class="infra-tag tag-storage">blob storage</span></div>
+  </div>
+  <div class="sect-label">Managed provider <span class="infra-tag tag-optional">replaceable</span></div>
+  <div class="comps">
+    <div class="comp c-mid-tag" onclick="show('qdrant-managed')"><div class="comp-name">Qdrant Cloud / Pinecone</div><div class="comp-sub">Provider handles persistence · no snapshot mgmt needed</div><span class="infra-tag tag-cloud">managed</span></div>
+  </div>
+</div>
+<div class="zone z-mid">
+  <div class="zone-title" style="color:#185FA5">Blob store <span class="always-tag tag-on">always on</span></div>
+  <div class="comps">
+    <div class="comp c-mid-tag" onclick="show('blob')"><div class="comp-name">Blob storage</div><div class="comp-sub">/raw-documents · /parquet · /snapshots</div><span class="infra-tag tag-storage">Azure Blob / HF Xet</span></div>
+  </div>
+</div>
+</div>
+
+<!-- RIGHT COL panels -->
+<div>
+<div class="col-label">Query runtime</div>
+<div class="zone z-query" style="margin-bottom:10px">
+  <div class="zone-title" style="color:#3C3489">C5 - Chabo orchestration <span class="always-tag tag-on">always on</span> <span class="infra-tag tag-hf">HF Spaces Docker</span></div>
+  <div class="comps">
+    <div class="comp c-query-tag" onclick="show('fastapi')"><div class="comp-name">FastAPI</div><div class="comp-sub">LangServe · streaming · :7860</div><span class="infra-tag tag-hf">HF Spaces</span></div>
+    <div class="comp c-query-tag" onclick="show('langgraph')"><div class="comp-name">LangGraph</div><div class="comp-sub">Pipeline orchestrator · modular nodes</div><span class="infra-tag tag-selfhost">in-process</span></div>
+    <div class="comp c-query-tag" onclick="show('embed-node')"><div class="comp-name">Embed node</div><div class="comp-sub">Query → vector · calls embedding service</div><span class="infra-tag tag-selfhost">calls embed svc</span></div>
+    <div class="comp c-query-tag" onclick="show('filter-node')"><div class="comp-name">Filter extraction</div><div class="comp-sub">LLM-extracted metadata filters</div><span class="infra-tag tag-optional">optional</span></div>
+    <div class="comp c-query-tag" onclick="show('retriever-node')"><div class="comp-name">Retrieve node</div><div class="comp-sub">Qdrant search · top-20</div><span class="infra-tag tag-selfhost">calls Qdrant</span></div>
+    <div class="comp c-query-tag" onclick="show('rerank-node')"><div class="comp-name">Rerank node</div><div class="comp-sub">Cross-encoder · top-5 · calls reranker</div><span class="infra-tag tag-selfhost">calls embed svc</span></div>
+    <div class="comp c-query-tag" onclick="show('generate-node')"><div class="comp-name">Generate node</div><div class="comp-sub">Multi-LLM · citations · streaming</div><span class="infra-tag tag-cloud">calls LLM</span></div>
+    <div class="comp c-query-tag" onclick="show('history')"><div class="comp-name">Conv. history</div><div class="comp-sub">3 turns · 8000 chars · session only</div><span class="infra-tag tag-selfhost">in-memory</span></div>
+  </div>
+</div>
+<div class="zone z-query" style="margin-bottom:10px;border-color:#7F77DD">
+  <div class="zone-title" style="color:#3C3489">LLM service <span class="always-tag tag-on">always on</span></div>
+  <div class="comps">
+    <div class="comp c-query-tag" onclick="show('llm')"><div class="comp-name">LLM · Qwen3-235B-A22B</div><div class="comp-sub">Novita API · swappable · HF · Anthropic · Cohere · Azure · any compatible</div><span class="infra-tag tag-cloud">$2–5/1k req</span></div>
+  </div>
+</div>
+<div class="zone" style="border-color:#D85A30;background:rgba(250,236,231,.08)">
+  <div class="zone-title" style="color:#712B13">C6 - Frontend <span class="always-tag tag-on">always on</span></div>
+  <div class="comps">
+    <div class="comp c-front-tag" onclick="show('chatui')"><div class="comp-name">ChatUI</div><div class="comp-sub">HF chat-ui · Docker · :3000 · streams from FastAPI</div><span class="infra-tag tag-hf">HF Spaces · $22/mo</span></div>
+  </div>
+</div>
+</div>
+</div>
+
+<div id="panel" class="panel">
+  <h3 id="p-title"></h3>
+  <p id="p-desc"></p>
+  <div class="panel-grid" id="p-grid"></div>
+</div>
+
+<!-- Pipelines -->
+<div style="margin-top:14px;background:var(--color-bg2);border-radius:8px;padding:10px 14px">
+  <div style="font-size:11px;font-weight:500;color:var(--color-text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Ingestion pipeline</div>
+  <div class="flow-row">
+    <div class="flow-step">Upload (PDF / text)</div><div class="flow-arr">→</div>
+    <div class="flow-step">C1 console</div><div class="flow-arr">→</div>
+    <div class="flow-step">C2 extract</div><div class="flow-arr">→</div>
+    <div class="flow-step">normalise + enrich</div><div class="flow-arr">→</div>
+    <div class="flow-step">C1 proofread + metadata</div><div class="flow-arr">→</div>
+    <div class="gate">✓ Approval</div><div class="flow-arr">→</div>
+    <div class="flow-step">C2 call embed service</div><div class="flow-arr">→</div>
+    <div class="flow-step">parquet → blob</div><div class="flow-arr">→</div>
+    <div class="flow-step">upload → Qdrant</div>
+  </div>
+</div>
+<div style="margin-top:8px;background:var(--color-bg2);border-radius:8px;padding:10px 14px">
+  <div style="font-size:11px;font-weight:500;color:var(--color-text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Query pipeline</div>
+  <div class="flow-row">
+    <div class="flow-step">User query</div><div class="flow-arr">→</div>
+    <div class="flow-step">ChatUI</div><div class="flow-arr">→</div>
+    <div class="flow-step">FastAPI → LangGraph</div><div class="flow-arr">→</div>
+    <div class="flow-step">Query rewriter (LLM)</div><div class="flow-arr">∥</div>
+    <div class="flow-step">Filter extraction (LLM · optional)</div><div class="flow-arr">→ both complete →</div>
+    <div class="flow-step">Retriever: embed svc + Qdrant top-20</div><div class="flow-arr">→</div>
+    <div class="flow-step">Reranker → top-5</div><div class="flow-arr">→</div>
+    <div class="flow-step">Generator (LLM) → stream + citations</div>
+  </div>
+</div>
+
+
+
+<footer>Chabo · Apache 2.0 · github.com/ChaBo-Project/chabo · Last updated June 2026</footer>
+
+<script>
+const data={
+  'upload':{title:'Upload interface + document lifecycle',desc:'Two ingestion modes. Mode A: PDF upload — file saved to raw doc store, triggers C2 extraction. Mode B: direct text input by section — bypasses extraction. Also handles delete and replace at document level.',items:[['Mode A','PDF → raw doc store → triggers C2'],['Mode B','Direct text by section — no extraction'],['Delete','Qdrant delete-by-filter on metadata.document_id'],['Replace','Detect by filename/ID · atomic swap on approval']]},
+  'doc-lifecycle':{title:'Document lifecycle management',desc:'Every chunk in Qdrant carries document_id in payload.metadata. This enables Qdrant filtered deletes — remove all chunks belonging to one document atomically. Postgres tracks document registry: ID, filename, version, chunk count, collection.',items:[['Delete','Qdrant delete-by-filter: metadata.document_id = X'],['Replace','Process new → atomic swap old/new chunks on approval'],['Same filename','Auto-detected as replace — no duplicate ingestion'],['Postgres tracks','document_id · filename · version · status · chunk count']]},
+  'chunk-viewer':{title:'Chunk viewer / editor',desc:'Operator reviews parsed output section by section. Can fix extraction errors, adjust chunk boundaries, flag for re-extraction. C2 sends chunks back here before approval.',items:[['Input','Chunks from C2 extraction or direct text'],['Actions','View · edit text · flag for re-extraction'],['State','Postgres: pending / approved / rejected'],['Infra','C1 web UI — no additional compute']]},
+  'meta-editor':{title:'Metadata editor',desc:'Operator assigns metadata per chunk according to configured taxonomy. This metadata becomes payload.metadata in Qdrant and drives filtered retrieval at query time.',items:[['Granularity','Per chunk · per section'],['Taxonomy','crop_type · governorate · year · document_source…'],['Output','payload.metadata in Qdrant'],['Constraint','Fields must match filterable_fields in params.cfg']]},
+  'approval':{title:'Approval gate',desc:'Human sign-off before embedding is triggered. Nothing reaches Qdrant without explicit approval. Audit trail in Postgres.',items:[['On approve','Triggers C2: embed → parquet → Qdrant'],['On reject','Loop back to C2 (VLM path) or drop'],['Audit','Approver · timestamp · document ID in Postgres'],['Guarantee','Nothing enters Qdrant without sign-off']]},
+  'postgres':{title:'Postgres — state + document registry',desc:'Dual role: chunk-level state during processing (pending/approved/rejected) and document-level registry enabling lifecycle operations (delete, replace).',items:[['Chunk state','Pending · approved · rejected · metadata per chunk'],['Doc registry','document_id · filename · version · chunk count · collection'],['Lifecycle','Source of truth for delete and replace ops'],['Hosting','Azure Database for Postgres · managed · sidecar C1']]},
+  'raw-store':{title:'Raw document store',desc:'Original uploaded files kept as permanent source of truth. Enables re-processing without requiring the user to re-upload. Stored in blob /raw-documents/ folder.',items:[['Location','Blob store · /raw-documents/'],['Purpose','Source of truth · audit · re-processing without re-upload'],['Retention','Keep indefinitely — document governance requirement'],['Linked to','document_id in Postgres registry']]},
+  'docling':{title:'Docling 2 — primary extractor',desc:'Primary PDF extraction using transformer-based layout analysis models. Requires GPU for practical throughput — CPU is too slow for real document volumes. HybridChunker for structure-aware chunking. Failure modes trigger VLM fallback.',items:[['Infra','GPU required — layout models are transformer-based'],['Chunker','HybridChunker — structure-aware'],['Failure modes','RTL reversal · replacement chars → VLM fallback'],['Table','CSV export best for Arabic PDFs']]},
+  'vlm':{title:'VLM extractor — optional Docling replacement',desc:'Replaces Docling when extraction fails. Reads page as image. GPU required. Two options.',items:[['Option A','Qwen2.5-VL-7B · self-hosted · GPU required'],['Option B','Azure Document Intelligence prebuilt-layout'],['Trigger','RTL reversal or ??? replacement chars'],['Slot','Replaces Docling in same C2 position']]},
+  'nfkc':{title:'Text normalisation / custom pre-processing',desc:'Configurable pre-processing step applied after extraction and before chunking. Domain-specific text fixes. For Arabic deployments: NFKC normalisation for presentation form codepoints U+FE70–FEFF.',items:[['When','After extract · before chunk'],['General','Any domain-specific text transformation'],['Arabic example','NFKC for U+FE70–FEFF presentation forms'],['Cost','Zero — in-process']]},
+  'enrichment':{title:'Chunk enrichment',desc:'Header enrichment propagates section context into child chunks. Custom post-processing for the target domain.',items:[['Header enrichment','Section headers propagated into chunks'],['Custom logic','Domain-specific post-processing'],['Location','C2 — same process as extraction'],['Infra','No additional compute']]},
+  'embed-call':{title:'Call embed service — C2 batch',desc:'C2 calls the shared embedding service after approval. Same endpoint used at query time — model consistency guaranteed.',items:[['Calls','Embedding/Retrieval service · BGE-M3'],['Shared with','Query-time embed node — same endpoint'],['Output','1024-dim float vectors per chunk'],['Triggered by','Approval gate confirmation']]},
+  'parquet':{title:'Parquet writer',desc:'Writes vector + payload to blob /parquet/ after embedding. Permanent backup enabling Qdrant rebuild without re-embedding.',items:[['Columns','vector (list[float]) · payload (text + metadata)'],['Storage','Blob · /parquet/ folder'],['Purpose','Backup · Qdrant rebuild without re-embed'],['Written by','C2 · after embed call returns']]},
+  'qdrant-upload':{title:'upload_parquet.py — single exit to Qdrant',desc:'Reads parquet and uploads to Qdrant. Single and only exit from document processing into Qdrant. Connects to Qdrant, not LLM.',items:[['Destination','Qdrant active index — not LLM'],['Script','src/components/ingestor/upload_parquet.py'],['Schema','payload.metadata must be nested dict'],['Single exit','One path from all doc processing into Qdrant']]},
+  'bge-m3':{title:'Embedding model — currently BGE-M3',desc:'Swappable bi-encoder model. Runs in the same container as the reranker. BGE-M3 is relatively lightweight — CPU is viable at ~$22/mo with some latency on requests. GPU reduces latency significantly and is better for production traffic. Any compatible embedding model can replace it — model choice affects vector dimension, infra requirements, and retrieval quality. Changing model requires re-embedding all existing chunks in Qdrant.',items:[['Current model','BGE-M3 · Feature Extraction · 1024-dim · bi-encoder'],['CPU cost','~$22/mo · some request latency · fine for low traffic'],['GPU cost','Higher · latency significantly lower · recommended at scale'],['Critical','Model change → must re-embed all chunks in Qdrant']]},
+  'reranker':{title:'Reranker model — currently BGE-reranker',desc:'Cross-encoder model running in the same container as the embedding model. Unlike the bi-encoder, a cross-encoder scores every (query, chunk) pair individually — it cannot pre-compute vectors. This makes it compute-intensive: every query triggers N forward passes against each candidate chunk. GPU is strongly recommended. At MVP scale (< 30 req/min) HF serverless is a practical alternative.',items:[['Current model','BGE-reranker · cross-encoder · same container as embedder'],['Why compute-intensive','N forward passes per query — no pre-computation possible'],['CPU','Possible but high latency under load — not recommended for reranker'],['T4 GPU cost','~$300/mo · scales with traffic volume'],['MVP optimisation','HF serverless → ~$10–30/mo at < 30 req/min']]},
+  'ext-embed':{title:'Embedding service provider',desc:'Alternative to self-hosting: consume open-source or proprietary embedding and reranking models via a managed API. Both embedding and reranker switch together as a unit. Changing provider requires re-embedding all existing chunks since model output dimensions and semantics will differ.',items:[['Options','Cohere · Voyage · HF Inference API · any compatible endpoint'],['Reranking','Cohere Rerank or compatible provider'],['Impact','C2 batch + query-time embed node both switch together'],['Risk','Model change → must re-embed all chunks in Qdrant']]},
+  'qdrant':{title:'Qdrant — active index',desc:'Live vector index. Single ingest entry from C2 upload_parquet.py. Filtered deletes for document lifecycle. Filterable fields via nested payload.metadata.',items:[['Ingest','Single entry — C2 upload_parquet.py only'],['Lifecycle','Delete-by-filter on metadata.document_id'],['Filters','payload.metadata nested dict required'],['Mode','native']]},
+  'qdrant-snap':{title:'Qdrant snapshots',desc:'RocksDB state persisted to blob /snapshots/. CRITICAL: copy /data → /tmp on HF Space startup — FUSE corrupts direct reads. Recovery endpoint: PUT not POST.',items:[['Storage','Blob · /snapshots/'],['CRITICAL','Copy /data → /tmp before Qdrant starts'],['FUSE','Direct FUSE reads corrupt RocksDB'],['Recovery','PUT not POST · Qdrant v1.15.3']]},
+  'qdrant-managed':{title:'Managed vector DB provider',desc:'Alternative to self-hosting. Provider handles persistence, backups, scaling. No snapshot management. Data leaves your infrastructure — sovereignty implications.',items:[['Options','Qdrant Cloud · Pinecone · Weaviate · Azure AI Search'],['Benefit','No snapshot / RocksDB management'],['Trade-off','Data leaves infrastructure · cross-border rules apply'],['Egypt','PDPL 2025 cross-border transfer licence required']]},
+  'blob':{title:'Blob store — shared persistent storage',desc:'Single storage account, three folders serving different purposes.',items:[['/raw-documents/','Original uploaded files · source of truth · audit'],['/parquet/','C2 embedding output · Qdrant rebuild without re-embed'],['/snapshots/','Qdrant RocksDB state · restored to /tmp on startup'],['Options','Azure Blob Storage or HF Xet bucket']]},
+  'fastapi':{title:'FastAPI — API layer',desc:'Main application server. LangServe for streaming. CPU only — no GPU needed in the orchestration layer.',items:[['Port','7860'],['Endpoints','/chatfed-ui-stream · /chatfed-with-file-stream'],['Compute','CPU · HF Spaces Docker'],['Health','GET /health · GET /docs']]},
+  'query-rewriter':{title:'Query rewriter',desc:'LLM call that rewrites the incoming query using conversation context. Runs in parallel with filter extraction — both are LLM calls that only need the raw query and context, neither depends on the other. Output feeds the retriever as the rewritten query to embed and search.',items:[['Type','LLM call — not embedding'],['Parallel with','Filter extraction — both run simultaneously'],['Uses','Raw query + conversation context window'],['Output','Rewritten query → feeds retriever']]},
+  'retriever':{title:'Retriever — embed + Qdrant search',desc:'Three inputs feed this step: the rewritten query (from query rewriter), the extracted filters (from filter extraction — must be complete before this step runs), and the conversation context. Calls embedding service to vectorise the rewritten query, then calls Qdrant with that vector and any filters applied. Returns top-20 candidates.',items:[['Input 1','Rewritten query from query rewriter'],['Input 2','Extracted filters — must arrive before Qdrant call'],['Step 1','Call embedding service (BGE-M3) → 1024-dim vector'],['Step 2','Qdrant search with vector + filters → top-20']]},
+  'reranker-node':{title:'Reranker — cross-encoder scoring',desc:'Takes top-20 candidates from Qdrant and calls the reranker model to score each (query, chunk) pair. Returns top-5. Currently mandatory — not a flag. Delegates computation to the shared reranker model in the embedding/retrieval service.',items:[['Input','Top-20 from Qdrant'],['Output','Top-5 reranked chunks'],['Calls','Reranker model · embedding/retrieval service'],['Mandatory','Yes — not configurable currently']]},
+  'context-window':{title:'Context window — per-request slice',desc:'NOT a persistent store. The actual conversation history lives in ChatUI MongoDB. On each request, Chabo receives a truncated slice of that history (3 turns / 8000 chars) and passes it to the query rewriter, filter extraction, and generator. All three consume the same context window — it is not passed to the retriever or reranker directly.',items:[['What it is','Per-request slice · not a persistent store'],['Actual store','ChatUI MongoDB — persistent conversation history'],['Chabo limit','MAX_TURNS=3 · MAX_CHARS=8000'],['Used by','Query rewriter · filter extraction · generator (not retriever/reranker)']]},
+  'fastapi-old':{title:'placeholder',desc:'',items:[]},
+  'langgraph':{title:'LangGraph — pipeline orchestrator',desc:'Coordinates the full query pipeline as a directed graph. Each step is a node — query rewriter, retriever, reranker, generator. Enforces execution order and passes state between steps. Generator only sees retrieved chunks — no knowledge outside the knowledge base.',items:[['Design','Modular nodes — each independently swappable'],['Guarantee','Generator sees only retrieved chunks'],['History','MAX_TURNS=3 · MAX_CHARS=8000'],['Framework','LangGraph (LangChain)']]},
+  'embed-node':{title:'Embed node — see Retriever',desc:'Embedding is now internal to the Retriever step — not a separate node.',items:[['See','Retriever card for full details'],['Note','Query embedding happens inside retrieval step']]},
+  'filter-node':{title:'Filter extraction — optional · parallel LLM call',desc:'LLM call that extracts structured metadata filters from the query and conversation context. Runs in parallel with query rewriter — both are independent LLM calls. Must complete before the retriever runs, since filters are applied at Qdrant search time. AND-safeguard retries with first field if impossible combination returns 0 results.',items:[['Type','LLM call — parallel with query rewriter'],['Must complete','Before retriever calls Qdrant — filters applied at search time'],['AND-safeguard','Retries with first filterable_field if AND → 0 results'],['Config','filterable_fields in params.cfg · filters.py FILTER_VALUES']]},
+  'retriever-node':{title:'See retriever card',desc:'Renamed.',items:[['See','retriever card']]},
+  'rerank-node':{title:'See reranker-node card',desc:'Renamed.',items:[['See','reranker-node card']]},
+  'generate-node':{title:'Generate node',desc:'5 reranked chunks + conversation history → LLM → streaming response with citations.',items:[['Input','5 chunks + conv. history'],['Citations','filename · page from payload.metadata'],['Streaming','True — LangServe → ChatUI'],['Temperature','0.1 (params.cfg)']]},
+  'history':{title:'See context-window card',desc:'Renamed to context window.',items:[['See','context-window card']]},
+  'llm':{title:'LLM service',desc:'Three deployment options — see individual cards below.',items:[['Option A','LLM API provider'],['Option B','Self-hosted open source LLM'],['Option C','IT-hosted / government LLM']]},
+  'llm-api':{title:'LLM API provider',desc:'Consume a hosted LLM via API. No GPU needed on the Chabo side. Current deployment: Qwen3-235B-A22B via Novita. Swappable by changing PROVIDER and MODEL in params.cfg. Any provider exposing a compatible API endpoint works.',items:[['Current model','Qwen3-235B-A22B · MoE · ~22B active params'],['Current provider','Novita · $2–5 per 1,000 requests'],['Swap','params.cfg PROVIDER + MODEL fields'],['Compatible providers','Novita · Cohere · Anthropic · HF Inference API']]},
+  'llm-self':{title:'Self-hosted open source LLM',desc:'Deploy an open source model on your own GPU. Chabo connects via a compatible API served by vLLM or similar. Full data sovereignty — queries never leave your infrastructure. GPU requirement depends on model size.',items:[['Examples','Karnak-40B · Qwen3 · Llama · any open source model'],['Karnak-40B','Arabic-optimised · ~40B params · needs A100 80GB (FP8)'],['Serving','vLLM · expose compatible endpoint · point params.cfg at it'],['Benefit','Full data sovereignty · queries never leave infrastructure']]},
+  'llm-institutional':{title:'IT-hosted / government LLM',desc:'If Ministry IT or a government body already has an LLM deployed — e.g. via their own Azure instance or on-premise server — Chabo can consume it by pointing params.cfg at that endpoint. No new GPU needed. Governed by the institutional deployment agreement.',items:[['Pattern','Point params.cfg PROVIDER + MODEL at existing endpoint'],['Examples','Ministry Azure instance · government-hosted model'],['Benefit','Reuse existing investment · no separate GPU cost on Chabo side'],['Governance','Covered by existing institutional deployment agreement']]},
+  'chatui':{title:'ChatUI — frontend',desc:'HF chat-ui. Streams from Chabo API. Stores full conversation history in MongoDB — this is the persistent conversation store. Chabo receives a truncated context window slice from this history per request.',items:[['Hosting','HF Spaces Docker · $22/mo'],['Port','3000'],['Conversation store','MongoDB — full persistent history'],['Context to Chabo','Truncated slice: 3 turns · 8000 chars per request']]}
+};
+let current=null;
+function show(id){
+  const d=data[id];if(!d)return;
+  document.querySelectorAll('.comp').forEach(c=>c.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+  const p=document.getElementById('panel');
+  document.getElementById('p-title').textContent=d.title;
+  document.getElementById('p-desc').textContent=d.desc;
+  document.getElementById('p-grid').innerHTML=d.items.map(([l,v])=>`<div class="panel-item"><div class="lbl">${l}</div><div class="val">${v}</div></div>`).join('');
+  if(current===id){p.classList.remove('open');current=null;event.currentTarget.classList.remove('active');}
+  else{p.classList.add('open');current=id;}
+}
+</script>
+</body>
+</html>
