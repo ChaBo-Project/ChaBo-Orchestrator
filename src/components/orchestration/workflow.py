@@ -27,6 +27,8 @@ def build_workflow(
     guard_client=None,
     input_guard_enabled: bool = False,
     blocked_message: str = "I'm sorry, but I can't help with that request.",
+    filter_extraction_client=None,
+    query_rewrite_client=None,
 ):
     """
     Build and compile the LangGraph workflow for RAG orchestration.
@@ -44,21 +46,30 @@ def build_workflow(
         guard_client: Optional InputGuardClient for classifier/llm call. Required if input_guard_enabled=True.
         input_guard_enabled: When True, runs input_guard_node as a parallel branch off ingest,
                              joins at guard_gate, and conditionally edged to
-                             blocked_response node when classifier returns 'unsafe'. 
+                             blocked_response node when classifier returns 'unsafe'.
                              When False, path defaults to main.
         blocked_message: Fixed warning for blocked_response.
+        filter_extraction_client: LLMClient for extract_filters_node
+        query_rewrite_client: LLMClient for rewrite_query_node
     """
+
+    if filterable_fields and filter_extraction_client is None:
+        raise ValueError("build_workflow: filterable_fields set but filter_extraction_client is None")
+    if rewriter_enabled and query_rewrite_client is None:
+        raise ValueError("build_workflow: rewriter_enabled=True but query_rewrite_client is None")
+
     if filterable_fields is None:
         filterable_fields = {}
     if filter_values is None:
         filter_values = {}
+
 
     workflow = StateGraph(GraphState)
 
     # Inject services into nodes
     r_node = partial(retrieve_node, retriever=retriever_instance)
     g_node = partial(generate_node_streaming, generator=generator_instance)
-    f_node = partial(extract_filters_node, generator=generator_instance, filterable_fields=filterable_fields, filter_values=filter_values)
+    f_node = partial(extract_filters_node, llm_client=filter_extraction_client, filterable_fields=filterable_fields, filter_values=filter_values)
 
     # Add nodes
     workflow.add_node("ingest", ingest_node)
@@ -73,7 +84,7 @@ def build_workflow(
     if rewriter_enabled:
         if db_context is None:
             raise ValueError("build_workflow: rewriter_enabled=True requires a db_context")
-        rw_node = partial(rewrite_query_node, generator=generator_instance, db_context=db_context)
+        rw_node = partial(rewrite_query_node, llm_client=query_rewrite_client, db_context=db_context)
         workflow.add_node("rewrite_query", rw_node)
         workflow.add_edge("ingest", "rewrite_query")
         workflow.add_edge("rewrite_query", "extract_filters")

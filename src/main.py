@@ -11,6 +11,7 @@ from functools import partial
 
 from components.retriever.retriever_orchestrator import create_retriever_from_config
 from components.generator.generator_orchestrator import Generator
+from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
 from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
@@ -62,9 +63,15 @@ if REWRITER_ENABLED:
              (no glossary-based expansion). Populate {DB_CONTEXT_PATH} to ground the rewriter.")
 
 # Initialize services
-logger.info("Initializing ChaBoHFEndpointRetriever and Generator...")
+logger.info("Initializing ChaBoHFEndpointRetriever and per-task LLM clients...")
 retriever_instance = create_retriever_from_config(config_file="params.cfg")
-generator_instance = Generator()
+
+# Get module-specific LLM configs
+generation_client = build_llm_client(config, "generation")
+generator_instance = Generator(llm_client=generation_client)
+
+filter_extraction_client = build_llm_client(config, "filter_extraction") if FILTERABLE_FIELDS else None
+query_rewrite_client = build_llm_client(config, "query_rewrite") if REWRITER_ENABLED else None
 
 # Get input guard config 
 INPUT_GUARD_ENABLED = config.getboolean("input_guard", "enabled", fallback=False)
@@ -81,12 +88,15 @@ guard_client = None
 if INPUT_GUARD_ENABLED:
     if INPUT_GUARD_MODE == "classifier" and not INPUT_GUARD_ENDPOINT:
         raise ValueError("[input_guard] mode=classifier requires endpoint_url to be set.")
+    # Get module-specific LLM config
+    # Only for llm mode - classifier mode uses a dedicated model (ref. config)
+    input_guard_client = build_llm_client(config, "input_guard") if INPUT_GUARD_MODE == "llm" else None
     guard_client = InputGuardClient(
         mode=INPUT_GUARD_MODE,
         qwen_endpoint=INPUT_GUARD_ENDPOINT,
         qwen_model=INPUT_GUARD_MODEL,
         hf_token=os.getenv("HF_TOKEN"),
-        generator=generator_instance,
+        llm_client=input_guard_client,
         timeout_s=INPUT_GUARD_TIMEOUT,
         block_controversial=INPUT_GUARD_BLOCK_CTRL,
     )
@@ -114,6 +124,8 @@ compiled_graph = build_workflow(
     guard_client=guard_client,
     input_guard_enabled=INPUT_GUARD_ENABLED,
     blocked_message=INPUT_GUARD_MSG,
+    filter_extraction_client=filter_extraction_client,
+    query_rewrite_client=query_rewrite_client,
 )
 
 

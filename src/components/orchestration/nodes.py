@@ -17,6 +17,7 @@ from components.generator.prompts import build_filter_extraction_messages, build
 if TYPE_CHECKING:
     from components.retriever.retriever_orchestrator import ChaBoHFEndpointRetriever
     from components.generator.generator_orchestrator import Generator
+    from components.llm import LLMClient
     from components.orchestration.state import GraphState
     from components.rewriter.db_context import DBContext
 
@@ -248,7 +249,7 @@ def _parse_filter_response(
 
 async def extract_filters_node(
     state: "GraphState",
-    generator: "Generator",
+    llm_client: "LLMClient",
     filterable_fields: Dict[str, str],
     filter_values: Dict[str, list],
 ) -> "GraphState":
@@ -272,7 +273,7 @@ async def extract_filters_node(
 
     try:
         messages = build_filter_extraction_messages(filterable_fields, filter_values, query, user_messages_history)
-        raw = await generator._call_llm(messages)
+        raw = await llm_client.ainvoke(messages)
         filters = _parse_filter_response(raw, filterable_fields)
     except Exception as e:
         logger.warning(f"extract_filters_node: LLM call failed ({e}). Proceeding without filters.")
@@ -317,7 +318,7 @@ def _parse_rewrite_response(raw_response: str) -> Optional[Dict[str, Any]]:
 
 async def rewrite_query_node(
     state: "GraphState",
-    generator: "Generator",
+    llm_client: "LLMClient",
     db_context: "DBContext",
     *,
     writer,
@@ -348,7 +349,7 @@ async def rewrite_query_node(
 
     try:
         messages = build_query_rewrite_messages(db_context, original_query, conversation_context)
-        raw = await generator._call_llm(messages)
+        raw = await llm_client.ainvoke(messages)
         parsed = _parse_rewrite_response(raw)
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()

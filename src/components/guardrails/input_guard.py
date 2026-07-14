@@ -12,8 +12,9 @@ Two interchangeable modes (selected by config):
     NOTE: Qwen3Guard doesn't use a classification head and instead does
     full decoding. So the generated response must be parsed with regex.
 
-  - ``llm`` — reuses the project's provider-agnostic ``Generator._call_llm`` with
-    a small JSON-verdict prompt. No extra infrastructure.
+  - ``llm`` — uses ``LLMClient.ainvoke`` with
+    a small JSON-verdict prompt. No extra infrastructure. 
+    Best to use as small/fast model for this
 """
 
 
@@ -138,7 +139,8 @@ class InputGuardClient:
         qwen_endpoint: Optional[str] = None,
         qwen_model: str = "Qwen/Qwen3Guard-Gen-0.6B",
         hf_token: Optional[str] = None,
-        generator: Any = None,
+        llm_client: Any = None,
+        generator: Any = None,  # deprecated alias for llm_client (kept for backward compat)
         timeout_s: float = 2.0,
         block_controversial: bool = False,
     ):
@@ -146,14 +148,15 @@ class InputGuardClient:
         self.qwen_endpoint = (qwen_endpoint or "").rstrip("/")
         self.qwen_model = qwen_model
         self.hf_token = hf_token
-        self.generator = generator
+        # `llm` mode uses LLMClient; `generator=` maintained for legacy cases.
+        self.llm_client = llm_client if llm_client is not None else generator
         self.timeout_s = timeout_s
         self.block_controversial = block_controversial
 
         if self.mode == "classifier" and not self.qwen_endpoint:
             raise ValueError("InputGuardClient: classifier mode requires qwen_endpoint")
-        if self.mode == "llm" and generator is None:
-            raise ValueError("InputGuardClient: llm mode requires a generator")
+        if self.mode == "llm" and self.llm_client is None:
+            raise ValueError("InputGuardClient: llm mode requires an llm_client")
         if self.mode not in ("classifier", "llm"):
             raise ValueError(f"InputGuardClient: unknown mode {self.mode!r}")
 
@@ -192,7 +195,7 @@ class InputGuardClient:
                 return parse_qwen_verdict(raw, self.block_controversial)
             else:  # llm
                 messages = build_input_guard_messages(query)
-                raw = await asyncio.wait_for(self.generator._call_llm(messages), timeout=self.timeout_s)
+                raw = await asyncio.wait_for(self.llm_client.ainvoke(messages), timeout=self.timeout_s)
                 return parse_llm_guard_verdict(raw, self.block_controversial)
         except asyncio.TimeoutError:
             return self._fallback_verdict("timeout")
