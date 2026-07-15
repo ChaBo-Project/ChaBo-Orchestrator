@@ -141,6 +141,7 @@ TASK_CONFIG = {
     "filter_extraction": ("metadata_filters", "llm_", "FILTER_EXTRACTION_LLM_"),
     "query_rewrite":     ("query_rewriter",   "llm_", "QUERY_REWRITE_LLM_"),
     "input_guard":       ("input_guard",      "llm_", "INPUT_GUARD_LLM_"),
+    "output_classification":      ("output_guard",     "llm_", "OUTPUT_CLASSIFICATION_LLM_"),
 }
 
 # LLMClient params

@@ -20,6 +20,8 @@ from components.retriever.filters import FILTER_VALUES
 from components.rewriter.db_context import load_db_context, DBContext
 from components.guardrails.input_guard import InputGuardClient
 from components.guardrails.output_guard import load_compiled_blocklist
+from components.guardrails.output_classification import OutputClassificationConfig, build_output_classification_messages
+from components.guardrails.llm_guard import build_guard_backend, DEFAULT_CLASSIFIER_MODEL
 from typing import Dict
 
 config = getconfig("params.cfg")
@@ -93,8 +95,8 @@ if INPUT_GUARD_ENABLED:
     input_guard_client = build_llm_client(config, "input_guard") if INPUT_GUARD_MODE == "llm" else None
     guard_client = InputGuardClient(
         mode=INPUT_GUARD_MODE,
-        qwen_endpoint=INPUT_GUARD_ENDPOINT,
-        qwen_model=INPUT_GUARD_MODEL,
+        classifier_endpoint=INPUT_GUARD_ENDPOINT,
+        classifier_model=INPUT_GUARD_MODEL,
         hf_token=os.getenv("HF_TOKEN"),
         llm_client=input_guard_client,
         timeout_s=INPUT_GUARD_TIMEOUT,
@@ -102,16 +104,48 @@ if INPUT_GUARD_ENABLED:
     )
     logger.info(f"Input guard enabled (mode={INPUT_GUARD_MODE})")
 
-# Get output guard config 
-OUTPUT_GUARD_ENABLED = config.getboolean("output_guard", "enabled", fallback=False)
-OUTPUT_GUARD_NOTICE = config.get("output_guard", "notice", fallback="[response withheld]")
+# Get output guard config — two independent elements: Classification (classifier or LLM) + keyword blocklist
+OUTPUT_CLASSIFICATION_ENABLED = config.getboolean("output_guard", "classification_enabled", fallback=False)
+OUTPUT_CLASSIFICATION_MODE = config.get("output_guard", "mode", fallback="llm").strip()
+OUTPUT_CLASSIFICATION_BLOCK_CTRL = config.getboolean("output_guard", "block_controversial", fallback=True)
+output_classification_config = None
+if OUTPUT_CLASSIFICATION_ENABLED:
+    if OUTPUT_CLASSIFICATION_MODE == "classifier":
+        classification_endpoint = config.get("output_guard", "endpoint_url", fallback="").strip()
+        if not classification_endpoint:
+            raise ValueError("[output_guard] mode=classifier requires endpoint_url to be set.")
+        classification_backend = build_guard_backend(
+            "classifier",
+            block_controversial=OUTPUT_CLASSIFICATION_BLOCK_CTRL,
+            endpoint=classification_endpoint,
+            model=config.get("output_guard", "model", fallback=DEFAULT_CLASSIFIER_MODEL).strip(),
+            hf_token=os.getenv("HF_TOKEN"),
+        )
+    else:  # llm
+        classification_backend = build_guard_backend(
+            "llm",
+            block_controversial=OUTPUT_CLASSIFICATION_BLOCK_CTRL,
+            llm_client=build_llm_client(config, "output_classification"),
+            prompt_builder=build_output_classification_messages,
+        )
+    output_classification_config = OutputClassificationConfig(
+        backend=classification_backend,
+        window_chars=config.getint("output_guard", "window_chars", fallback=600),
+        notice=config.get("output_guard", "classification_message", fallback="[response withheld]"),
+        timeout_s=config.getfloat("output_guard", "timeout_s", fallback=5.0),
+    )
+    logger.info(f"Output classifier enabled (mode={OUTPUT_CLASSIFICATION_MODE}, window_chars={output_classification_config.window_chars})")
+
+# --- Keyword blocklist ---
+BLOCKLIST_ENABLED = config.getboolean("output_guard", "blocklist_enabled", fallback=False)
+BLOCKLIST_MESSAGE = config.get("output_guard", "blocklist_message", fallback="[response withheld]")
 blocklist = None
-if OUTPUT_GUARD_ENABLED:
+if BLOCKLIST_ENABLED:
     blocklist_path = config.get(
         "output_guard", "blocklist_path", fallback="src/components/guardrails/blocklist.txt"
     )
     blocklist = load_compiled_blocklist(blocklist_path)
-    logger.info("Output guard enabled")
+    logger.info("Output blocklist enabled")
 
 # Build the LangGraph workflow
 compiled_graph = build_workflow(
@@ -155,11 +189,11 @@ async def root():
 # LANGSERVE ROUTES
 #----------------------------------------
 
-# Inject compiled_graph and config into adapters (blocklist=None when output guard disabled)
+# Inject compiled_graph and config into adapters (blocklist=None when the blocklist is disabled)
 text_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
-                       blocklist=blocklist, output_notice=OUTPUT_GUARD_NOTICE)
+                       blocklist=blocklist, blocklist_notice=BLOCKLIST_MESSAGE, classification_config=output_classification_config)
 file_adapter = partial(chatui_file_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
-                       blocklist=blocklist, output_notice=OUTPUT_GUARD_NOTICE)
+                       blocklist=blocklist, blocklist_notice=BLOCKLIST_MESSAGE, classification_config=output_classification_config)
 
 # Text-only endpoint
 add_routes(

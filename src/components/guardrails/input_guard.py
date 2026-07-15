@@ -20,91 +20,11 @@ Two interchangeable modes (selected by config):
 
 import asyncio
 import logging
-import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
-
+from typing import Any, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
-
-from components.utils import _acall_hf_endpoint
+from .llm_guard import GuardVerdict, build_guard_backend, DEFAULT_CLASSIFIER_MODEL
 
 logger = logging.getLogger(__name__)
-
-
-# --- Qwen3Guard output parsing ----------------------------------------------
-# see notes above
-_QWEN_SAFETY_RE = re.compile(r"Safety:\s*(Safe|Unsafe|Controversial)", re.IGNORECASE)
-_QWEN_CATEGORY_RE = re.compile(
-    r"(Violent|Non-violent Illegal Acts|Sexual Content or Sexual Acts|PII|"
-    r"Suicide & Self-Harm|Unethical Acts|Politically Sensitive Topics|"
-    r"Copyright Violation|Jailbreak|None)",
-    re.IGNORECASE,
-)
-
-
-@dataclass
-class GuardVerdict:
-    """Result of an input-guard classification."""
-    safe: bool                 # False: block request
-    severity: str              # "safe" | "unsafe" | "controversial" | "unknown"
-    category: str              # e.g. "Jailbreak", "Violent", "None" (logging only)
-    fallback_used: bool = False  # True if the guard errored/timed out
-    notes: Dict[str, Any] = field(default_factory=dict)
-
-
-def _decide_safe(severity: str, block_controversial: bool) -> bool:
-    """Block on 'unsafe'; + block 'controversial' when configured."""
-    sev = severity.lower()
-    if sev == "unsafe":
-        return False
-    if sev == "controversial" and block_controversial:
-        return False
-    return True
-
-
-def parse_qwen_verdict(raw: str, block_controversial: bool) -> GuardVerdict:
-    """
-    Parse the Qwen3Guard moderation response. Raises ValueError if the
-    main classification is absent (maps to fail-policy).
-    """
-    m = _QWEN_SAFETY_RE.search(raw or "")
-    if not m:
-        raise ValueError("no classification in guard output")
-    severity = m.group(1).lower()
-    cat_m = _QWEN_CATEGORY_RE.search(raw or "")
-    category = cat_m.group(1) if cat_m else "None"
-    return GuardVerdict(
-        safe=_decide_safe(severity, block_controversial),
-        severity=severity,
-        category=category,
-        notes={"raw": (raw or "")[:500]},
-    )
-
-
-def parse_llm_guard_verdict(raw: str, block_controversial: bool) -> GuardVerdict:
-    """
-    Parse the JSON output from `llm` mode: {"verdict": "...", "category": "..."}.
-
-    Tolerates ```json fences. 
-    Raises ValueError on unparseable / shapeless output (mapped to the fail-policy).
-
-    NOTE: We use this approach because it is portable across different inference providers.
-    """
-    import json
-    cleaned = (raw or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    parsed = json.loads(cleaned)  # JSONDecodeError → caught by caller
-    if not isinstance(parsed, dict):
-        raise ValueError("guard verdict is not a JSON object")
-    verdict = str(parsed.get("verdict", "")).lower()
-    category = str(parsed.get("category") or "none")
-    if verdict not in ("safe", "unsafe", "controversial"):
-        raise ValueError(f"unexpected verdict value: {verdict!r}")
-    return GuardVerdict(
-        safe=_decide_safe(verdict, block_controversial),
-        severity=verdict,
-        category=category,
-        notes={"raw": (raw or "")[:500]},
-    )
 
 
 def build_input_guard_messages(query: str) -> list:
@@ -136,8 +56,8 @@ class InputGuardClient:
         self,
         mode: str,
         *,
-        qwen_endpoint: Optional[str] = None,
-        qwen_model: str = "Qwen/Qwen3Guard-Gen-0.6B",
+        classifier_endpoint: Optional[str] = None,
+        classifier_model: str = DEFAULT_CLASSIFIER_MODEL,
         hf_token: Optional[str] = None,
         llm_client: Any = None,
         generator: Any = None,  # deprecated alias for llm_client (kept for backward compat)
@@ -145,20 +65,19 @@ class InputGuardClient:
         block_controversial: bool = False,
     ):
         self.mode = mode
-        self.qwen_endpoint = (qwen_endpoint or "").rstrip("/")
-        self.qwen_model = qwen_model
-        self.hf_token = hf_token
-        # `llm` mode uses LLMClient; `generator=` maintained for legacy cases.
-        self.llm_client = llm_client if llm_client is not None else generator
         self.timeout_s = timeout_s
-        self.block_controversial = block_controversial
-
-        if self.mode == "classifier" and not self.qwen_endpoint:
-            raise ValueError("InputGuardClient: classifier mode requires qwen_endpoint")
-        if self.mode == "llm" and self.llm_client is None:
-            raise ValueError("InputGuardClient: llm mode requires an llm_client")
-        if self.mode not in ("classifier", "llm"):
-            raise ValueError(f"InputGuardClient: unknown mode {self.mode!r}")
+        # `llm` mode uses LLMClient; `generator=` maintained for legacy cases.
+        llm = llm_client if llm_client is not None else generator
+        # Build the shared classification backend (validates the active mode's config).
+        self.backend = build_guard_backend(
+            mode,
+            block_controversial=block_controversial,
+            endpoint=classifier_endpoint,
+            model=classifier_model,
+            hf_token=hf_token,
+            llm_client=llm,
+            prompt_builder=build_input_guard_messages,
+        )
 
     def _fallback_verdict(self, reason: str) -> GuardVerdict:
         """Log if failure"""
@@ -171,32 +90,13 @@ class InputGuardClient:
             notes={"reason": reason},
         )
 
-    async def _classify_qwen(self, query: str) -> str:
-        """Call the Qwen3Guard endpoint."""
-        url = f"{self.qwen_endpoint}/v1/chat/completions"
-        payload = {
-            "model": self.qwen_model,
-            "messages": [{"role": "user", "content": query}],
-            "temperature": 0.0,
-            "max_tokens": 64,
-        }
-        resp = await _acall_hf_endpoint(url, self.hf_token or "", payload)
-        return resp["choices"][0]["message"]["content"]
-
     async def classify(self, query: str) -> GuardVerdict:
         """Classify `query`. Never raises — returns a fallback verdict on error."""
         if not query or not query.strip():
             return GuardVerdict(safe=True, severity="safe", category="None",
                                 notes={"reason": "empty_query"})
         try:
-            # local classifier
-            if self.mode == "classifier":
-                raw = await asyncio.wait_for(self._classify_qwen(query), timeout=self.timeout_s)
-                return parse_qwen_verdict(raw, self.block_controversial)
-            else:  # llm
-                messages = build_input_guard_messages(query)
-                raw = await asyncio.wait_for(self.llm_client.ainvoke(messages), timeout=self.timeout_s)
-                return parse_llm_guard_verdict(raw, self.block_controversial)
+            return await asyncio.wait_for(self.backend.classify(query), timeout=self.timeout_s)
         except asyncio.TimeoutError:
             return self._fallback_verdict("timeout")
         except Exception as e:  # transport error, parse error, malformed response
