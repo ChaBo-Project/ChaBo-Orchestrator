@@ -1,10 +1,11 @@
 import asyncio
+import configparser
 import re
 import sys
 import os
 import json
 import pandas as pd
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
 # Add src/ to path so imports match how main.py resolves them
@@ -40,6 +41,8 @@ class EvalCase:
     subset: str                              # "standalone" | "history" | "safeguard"
     user_messages_history: Optional[str]     # pre-built history string, None if not applicable
     expected_filters: Optional[Dict]         # ground truth filters, None if no filter expected
+    expected_answer: Optional[str] = None    # rough ground truth answer for RAGAS scoring
+    expected_sources: Optional[List[Dict]] = field(default=None)  # expected {filename, page} dicts for RAGAS
 
 
 def build_eval_suite() -> List[EvalCase]:
@@ -56,6 +59,8 @@ def build_eval_suite() -> List[EvalCase]:
             subset="standalone",
             user_messages_history=None,
             expected_filters=item.get("expected_filters"),
+            expected_answer=item.get("expected_answer"),
+            expected_sources=item.get("expected_sources"),
         ))
 
     for block in history_blocks:
@@ -70,6 +75,8 @@ def build_eval_suite() -> List[EvalCase]:
             subset="history",
             user_messages_history=history_str,
             expected_filters=block.get("expected_filters"),
+            expected_answer=block.get("expected_answer"),
+            expected_sources=block.get("expected_sources"),
         ))
 
     for item in safeguard_questions:
@@ -78,6 +85,8 @@ def build_eval_suite() -> List[EvalCase]:
             subset="safeguard",
             user_messages_history=None,
             expected_filters=item.get("expected_filters"),
+            expected_answer=item.get("expected_answer"),
+            expected_sources=item.get("expected_sources"),
         ))
 
     return cases
@@ -405,15 +414,177 @@ async def run_sample_eval(filters_enabled: bool, input_file=None):
     sys.exit(0)
 
 
+_RAGAS_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "ragas_config.cfg")
+
+
+def _load_ragas_config() -> configparser.ConfigParser:
+    config = configparser.ConfigParser(inline_comment_prefixes=("#",))
+    if not config.read(_RAGAS_CONFIG_PATH):
+        print(f"💥 ragas_config.cfg not found at {_RAGAS_CONFIG_PATH}")
+        sys.exit(1)
+    return config
+
+
+def _build_ragas_llm(config: configparser.ConfigParser):
+    from ragas.llms import LangchainLLMWrapper
+
+    provider = config.get("ragas", "JUDGE_PROVIDER").strip().lower()
+    model = config.get("ragas", "JUDGE_MODEL").strip()
+
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(model=model)
+    elif provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        llm = ChatAnthropic(model=model)
+    elif provider == "cohere":
+        from langchain_cohere import ChatCohere
+        llm = ChatCohere(model=model)
+    elif provider == "azure":
+        from langchain_openai import AzureChatOpenAI
+        llm = AzureChatOpenAI(
+            azure_deployment=model,
+            azure_endpoint=config.get("ragas", "AZURE_ENDPOINT").strip(),
+            api_version="2024-02-01",
+        )
+    elif provider == "huggingface":
+        from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
+        endpoint = HuggingFaceEndpoint(
+            endpoint_url=model,
+            huggingfacehub_api_token=os.environ.get("HF_TOKEN"),
+        )
+        llm = ChatHuggingFace(llm=endpoint)
+    else:
+        print(f"💥 Unknown JUDGE_PROVIDER '{provider}'. Supported: openai, anthropic, cohere, azure, huggingface")
+        sys.exit(1)
+
+    return LangchainLLMWrapper(llm)
+
+
+def _build_ragas_metrics(config: configparser.ConfigParser, ragas_llm):
+    from ragas.metrics import Faithfulness, AnswerRelevancy, ContextRecall, ContextPrecision
+
+    METRIC_MAP = {
+        "faithfulness": Faithfulness,
+        "answer_relevancy": AnswerRelevancy,
+        "context_recall": ContextRecall,
+        "context_precision": ContextPrecision,
+    }
+
+    metrics_raw = config.get("ragas", "METRICS", fallback="faithfulness,answer_relevancy,context_recall,context_precision")
+    metric_names = [m.strip() for m in metrics_raw.split(",") if m.strip()]
+
+    metrics = []
+    for name in metric_names:
+        if name not in METRIC_MAP:
+            print(f"⚠️  Unknown metric '{name}' in ragas_config.cfg, skipping.")
+            continue
+        metrics.append(METRIC_MAP[name](llm=ragas_llm))
+
+    if not metrics:
+        print("💥 No valid metrics configured in ragas_config.cfg.")
+        sys.exit(1)
+
+    return metrics
+
+
+async def run_ragas_eval(filters_enabled: bool):
+    from ragas import evaluate
+    from ragas.dataset_schema import SingleTurnSample, EvaluationDataset
+
+    ragas_config = _load_ragas_config()
+    ragas_llm = _build_ragas_llm(ragas_config)
+    metrics = _build_ragas_metrics(ragas_config, ragas_llm)
+
+    print("🚀 Initializing Retriever and Generator...")
+    try:
+        retriever = create_retriever_from_config("params.cfg")
+    except Exception as e:
+        print(f"💥 Failed to load retriever: {e}")
+        sys.exit(1)
+
+    generator = Generator()
+
+    filter_generator = None
+    if filters_enabled:
+        if not FILTERABLE_FIELDS:
+            print("💥 --filters passed but filterable_fields is empty in params.cfg. Aborting.")
+            sys.exit(1)
+        filter_generator = Generator()
+
+    cases = build_eval_suite()
+    ragas_cases = [
+        c for c in cases
+        if c.expected_answer and not c.expected_answer.startswith("TODO")
+    ]
+    skipped = len(cases) - len(ragas_cases)
+    if not ragas_cases:
+        print("💥 No test cases with expected_answer found. Fill in expected_answer fields in test_questions.py first.")
+        sys.exit(1)
+    if skipped:
+        print(f"⚠️  Skipping {skipped} case(s) with TODO placeholders in expected_answer.")
+
+    print(f"📋 Running RAGAS eval on {len(ragas_cases)} case(s)...")
+
+    samples = []
+    for case in ragas_cases:
+        print(f"🧐 [{case.subset}] Processing: {case.question[:50]}...")
+
+        filters = None
+        if filter_generator is not None:
+            state = {"query": case.question, "user_messages_history": case.user_messages_history}
+            result_state = await extract_filters_node(
+                state,
+                generator=filter_generator,
+                filterable_fields=FILTERABLE_FIELDS,
+                filter_values=FILTER_VALUES,
+            )
+            filters = result_state.get("metadata_filters")
+
+        retriever_kwargs = {"filters": filters} if filters else {}
+        docs = await retriever.ainvoke(case.question, **retriever_kwargs)
+        contexts = [doc.page_content for doc in docs]
+
+        answer = await generator.generate(
+            query=case.question,
+            context=docs,
+            chatui_format=False,
+        )
+
+        samples.append(SingleTurnSample(
+            user_input=case.question,
+            response=answer,
+            retrieved_contexts=contexts,
+            reference=case.expected_answer,
+        ))
+
+    print(f"\n⚖️  Scoring {len(samples)} sample(s) with RAGAS...")
+    dataset = EvaluationDataset(samples=samples)
+    result = evaluate(dataset=dataset, metrics=metrics, llm=ragas_llm)
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    output_path = _result_path("ragas_report", filters_enabled)
+    scores_df = result.to_pandas()
+    scores_df.to_json(output_path, orient="records", indent=4, force_ascii=False)
+
+    score_cols = [c for c in scores_df.columns if c not in ("user_input", "response", "retrieved_contexts", "reference")]
+    print("\n📊 RAGAS Summary (averages):")
+    for col in score_cols:
+        print(f"   {col}: {scores_df[col].mean():.3f}")
+
+    print(f"\n✅ RAGAS report saved to {output_path}")
+    sys.exit(0)
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="ChaBo RAG Evaluation")
     parser.add_argument(
         "--mode",
-        choices=["retrieval", "batch", "sample"],
+        choices=["retrieval", "batch", "sample", "ragas"],
         default="retrieval",
-        help="retrieval: run Stage 1 and save results | batch: judge with LLM (resumes from checkpoint) | sample: judge first 2 questions only"
+        help="retrieval: run Stage 1 and save results | batch: judge with LLM (resumes from checkpoint) | sample: judge first 2 questions only | ragas: full pipeline eval with RAGAS metrics"
     )
     parser.add_argument(
         "--filters",
@@ -427,5 +598,6 @@ if __name__ == "__main__":
         "retrieval": lambda: run_retrieval_only(args.filters),
         "batch": lambda: run_evaluation_batch(args.filters),
         "sample": lambda: run_sample_eval(args.filters),
+        "ragas": lambda: run_ragas_eval(args.filters),
     }
     asyncio.run(modes[args.mode]())
