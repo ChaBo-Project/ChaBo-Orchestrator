@@ -1,6 +1,5 @@
 import asyncio
 import configparser
-import csv
 import re
 import sys
 import os
@@ -114,6 +113,17 @@ def _check_filters(expected: Optional[Dict], extracted: Optional[Dict]) -> str:
 def _result_path(base: str, filtered: bool) -> str:
     suffix = "_filtered" if filtered else ""
     return os.path.join(RESULTS_DIR, f"{base}{suffix}.json")
+
+
+def _append_history_row(history_path: str, row: Dict) -> None:
+    """Append a row to the RAGAS history CSV, tolerating a metric set that changes across runs."""
+    new_df = pd.DataFrame([row])
+    if os.path.exists(history_path):
+        existing_df = pd.read_csv(history_path)
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True, sort=False)
+    else:
+        combined_df = new_df
+    combined_df.to_csv(history_path, index=False)
 
 
 async def evaluate_questions(
@@ -592,21 +602,24 @@ async def run_ragas_eval(filters_enabled: bool):
     for col, val in avg_scores.items():
         print(f"   {col}: {val:.3f}")
 
+    subset_counts: Dict[str, int] = {}
+    for case in ragas_cases:
+        key = f"num_{case.subset}"
+        subset_counts[key] = subset_counts.get(key, 0) + 1
+
     history_path = os.path.join(RESULTS_DIR, "ragas_history.csv")
-    history_exists = os.path.exists(history_path)
     history_row = {
         "timestamp": timestamp,
         "filters_enabled": filters_enabled,
         "judge_provider": ragas_config.get("ragas", "JUDGE_PROVIDER").strip(),
         "judge_model": ragas_config.get("ragas", "JUDGE_MODEL").strip(),
         "num_cases": len(samples),
+        **subset_counts,
+        "initial_k": _config.getint("retrieval", "initial_k", fallback=None),
+        "final_k": _config.getint("retrieval", "final_k", fallback=None),
         **avg_scores,
     }
-    with open(history_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=history_row.keys())
-        if not history_exists:
-            writer.writeheader()
-        writer.writerow(history_row)
+    _append_history_row(history_path, history_row)
 
     print(f"\n✅ RAGAS report saved to {output_path}")
     print(f"📈 History updated at {history_path}")
