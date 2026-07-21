@@ -7,6 +7,7 @@ import json
 import pandas as pd
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
+from ragas.run_config import RunConfig
 
 # Add src/ to path so imports match how main.py resolves them
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
@@ -459,6 +460,13 @@ def _build_ragas_llm(config: configparser.ConfigParser):
 
     return LangchainLLMWrapper(llm)
 
+def _build_ragas_embeddings(retriever):
+    from langchain_huggingface import HuggingFaceEndpointEmbeddings
+
+    return HuggingFaceEndpointEmbeddings(
+        model=retriever.embedding_endpoint_url,
+        huggingfacehub_api_token=retriever.hf_token,
+    )
 
 def _build_ragas_metrics(config: configparser.ConfigParser, ragas_llm):
     from ragas.metrics import Faithfulness, AnswerRelevancy, ContextRecall, ContextPrecision
@@ -502,6 +510,7 @@ async def run_ragas_eval(filters_enabled: bool):
         print(f"💥 Failed to load retriever: {e}")
         sys.exit(1)
 
+    ragas_embeddings = _build_ragas_embeddings(retriever)
     generator = Generator()
 
     filter_generator = None
@@ -559,7 +568,11 @@ async def run_ragas_eval(filters_enabled: bool):
 
     print(f"\n⚖️  Scoring {len(samples)} sample(s) with RAGAS...")
     dataset = EvaluationDataset(samples=samples)
-    result = evaluate(dataset=dataset, metrics=metrics, llm=ragas_llm)
+    result = evaluate(dataset=dataset, 
+                      metrics=metrics, 
+                      llm=ragas_llm,
+                      embeddings=ragas_embeddings,
+                      run_config=RunConfig(max_workers=2, timeout=900),)
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     output_path = _result_path("ragas_report", filters_enabled)
