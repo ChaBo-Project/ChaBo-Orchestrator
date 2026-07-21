@@ -133,7 +133,6 @@ class LLMClient:
 
 # --- Per-task LLMClient setup
 # Each task uses an independent LLM config with no fallback.
-# !! to do: add a default llm config !!
 
 # Lookup table to pull the correct module config
 TASK_CONFIG = {
@@ -143,6 +142,13 @@ TASK_CONFIG = {
     "input_guard":       ("input_guard",      "llm_", "INPUT_GUARD_LLM_"),
     "output_classification":      ("output_guard",     "llm_", "OUTPUT_CLASSIFICATION_LLM_"),
 }
+
+# Only "generation" is ever driven via astream() for token-by-token UI output. Every other
+# task calls ainvoke() for a single short response — but LangChain chat models still open a
+# streaming SSE connection internally under streaming=True even for ainvoke(), which is what
+# let an external asyncio.wait_for timeout (input/output guard) cancel mid-stream and risk
+# leaking the underlying httpx connection. See PR25.md Finding #2.
+STREAMING_TASKS = {"generation"}
 
 # LLMClient params
 _FIELDS = {
@@ -190,7 +196,7 @@ def build_llm_client(config, task: str) -> "LLMClient":
     auth_config = get_auth_for_generator(resolved["provider"])
 
     logger.info(f"LLM client for task '{task}': provider={resolved['provider']}, model={resolved['model']}")
-    return LLMClient(auth_config=auth_config, **resolved)
+    return LLMClient(auth_config=auth_config, streaming=(task in STREAMING_TASKS), **resolved)
 
 
 def build_llm_clients(config, tasks=None) -> dict:

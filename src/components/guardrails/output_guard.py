@@ -66,6 +66,13 @@ def _is_sep(ch: str) -> bool:
     return ch.isspace() or ch in _PUNCT
 
 
+# Hard ceiling on an unbroken (no-separator) run before _flush_safe force-cuts
+# it anyway, well above any real blocklist term's max_len. Bounds self.buf (and
+# therefore normalize_arabic() cost) even for adversarial separator-free input
+# (e.g. a huge URL/base64 blob) that would otherwise never hit a word boundary.
+_MAX_UNBROKEN_RUN = 512
+
+
 # --- Arabic normalization ----------------------------------------------------
 # Harakat/tanwin (U+064B–U+0652), superscript alef (U+0670), tatweel (U+0640).
 _AR_DIACRITICS = set(chr(c) for c in range(0x064B, 0x0653)) | {"ٰ", "ـ"}
@@ -255,7 +262,12 @@ class StreamingBlocklistFilter:
     def _flush_safe(self) -> str:
         """
         Release the safe prefix: up to the last word boundary that lies before
-        the (max_len - 1) hold-back point. Never cuts mid-token.
+        the (max_len - 1) hold-back point. Never cuts mid-token — except when a
+        single unbroken run (no separators) exceeds _MAX_UNBROKEN_RUN, where we
+        force-cut at the hold-back point anyway to bound buffer growth on
+        adversarial separator-free input. Correctness (no missed cross-chunk
+        term) only depends on the cut point being <= limit; the word-boundary
+        search is a cosmetic refinement on top of that, not a requirement.
         """
         hold = self.c.max_len - 1
         limit = len(self.buf) - hold
@@ -267,6 +279,18 @@ class StreamingBlocklistFilter:
                 cut = i
                 break
         if cut == -1:
+            if limit > _MAX_UNBROKEN_RUN:
+                # Force-cut retains max_len chars (one more than the normal `hold`),
+                # not just `hold`. A max_len-length term whose match lands exactly at
+                # the current buffer end is "tentative" (not yet confirmed — see
+                # _match) and needs to survive one more call to be reconfirmed; `hold`
+                # alone is one char short of that guarantee, so the force-cut path
+                # needs the extra margin that the separator-based cut gets for free
+                # (it never flushes past a boundary at all when cut == -1).
+                p = len(self.buf) - self.c.max_len
+                if p > 0:
+                    emit, self.buf = self.buf[:p], self.buf[p:]
+                    return emit
             return ""  # no boundary in the flushable region yet — keep buffering
         p = cut + 1
         emit, self.buf = self.buf[:p], self.buf[p:]

@@ -112,6 +112,10 @@ Fields stored as top-level keys or as JSON strings will not be found by the filt
 
 Three optional pipeline stages, all configured in `params.cfg` and **off by default**. Omit each section (or set `enabled = false`) to skip it.
 
+> **Upgrading from an earlier version:** each optional stage now uses its **own** independent LLM config (`llm_provider` / `llm_model`, etc.) under its own `params.cfg` section — there is no fallback to `[generator]` anymore. If you already have `[metadata_filters] filterable_fields` set and/or `[query_rewriter] enabled = true`, you must add `llm_provider` / `llm_model` (and, for HuggingFace, `llm_inference_provider` / `llm_organization`) under those same sections before upgrading, or ChaBo will fail to start. The startup error names the exact missing key, e.g. `LLM config missing: [metadata_filters] llm_provider (or env FILTER_EXTRACTION_LLM_PROVIDER) is required.` See the example blocks below for the full set of keys each stage expects.
+>
+> **No implicit reuse of `[generator]` across stages, ever — not even as a fallback.** This isn't just an upgrade-time gotcha: there is no mechanism, now or later, where an unconfigured guard/filter/rewriter stage silently falls back to the main generation model. If you want the input guard (or output classifier, filter extraction, query rewriter) to run on the *same* underlying model/endpoint you already use for generation, you must explicitly repeat those same `provider` / `model` values (and any provider-specific fields, e.g. `inference_provider` / `organization` for HuggingFace) under that stage's own section — copy-paste, not inheritance. An unconfigured stage that's turned on fails to start rather than quietly reusing `[generator]`.
+
 **Query rewriter** — normalises the query and optionally translates it into the corpus language before retrieval:
 
 ```ini
@@ -128,24 +132,68 @@ target_language =                   # ISO code (e.g. "ar") for cross-lingual rew
 ```ini
 [input_guard]
 enabled = true
-mode = llm           # 'llm' reuses the generator LLM (no extra infra); 'classifier' calls a Qwen3Guard-Gen endpoint
-endpoint_url =       # required for mode = classifier, e.g. http://qwen3guard:8000
+mode = llm                    # 'llm' = in-context classification via its own LLM (see llm_* below); 'classifier' calls a Qwen3Guard-Gen endpoint
+endpoint_url =                 # required for mode = classifier, e.g. http://qwen3guard:8000
 model = Qwen/Qwen3Guard-Gen-0.6B
+llm_provider = huggingface     # required for mode = llm — its own independent LLM config, no fallback to [generator]
+llm_model = ...
+llm_max_tokens = 64
+llm_temperature = 0.0
 block_controversial = false
-timeout_s = 2.0      # on timeout/error the guard fails open (allows the query)
+timeout_s = 2.0                # on timeout/error the guard fails open (allows the query)
 blocked_message = I'm sorry, but I can't help with that request.
 ```
 
-> `mode = llm` needs no extra infrastructure, but its latency tracks the generator model — set `timeout_s` above the model's typical response time or the guard will time out and fail open (silently disabling protection). `mode = classifier` needs a Qwen3Guard-Gen endpoint (see the `guard` Compose profile below).
+> `mode = llm` needs no extra infrastructure beyond its own `llm_*` config above, but its latency tracks that model — set `timeout_s` above its typical response time or the guard will time out and fail open (silently disabling protection). It does **not** reuse `[generator]`'s model — see the note above. `mode = classifier` needs a Qwen3Guard-Gen endpoint (see the `guard` Compose profile below).
 
-**Output guard** — screens the streamed answer against a multilingual blocklist; on a hit the stream stops and `notice` replaces the answer:
+**Output guard** — two independent sub-features, both off by default, applied to the streamed answer:
 
 ```ini
 [output_guard]
-enabled = true
+# 1. Windowed classification — re-classifies a sliding window of the streamed
+#    answer as it's generated; a hit stops the stream and classification_message
+#    replaces it. Same mode/backend choice as the input guard.
+classification_enabled = true
+mode = llm                     # 'llm' or 'classifier', same semantics as input_guard
+endpoint_url =                 # required for mode = classifier
+model = Qwen/Qwen3Guard-Gen-0.6B
+llm_provider = huggingface     # required for mode = llm — its own independent LLM config
+llm_model = ...
+window_chars = 200             # re-classify every N new chars of the answer
+block_controversial = true
+timeout_s = 5.0
+classification_message = This application is not able to answer certain queries. Please try again.
+
+# 2. Keyword blocklist — screens the stream against a multilingual term list
+#    (Arabic-aware normalisation + CJK/Thai substring matching).
+blocklist_enabled = true
 blocklist_path = src/components/guardrails/blocklist.txt
-notice = There was an error in the output. Please try again.
+blocklist_message = There was an error in the output. Please try again.
 ```
+
+#### System Prompt: Framework Values vs Instance Guidelines
+
+The generator's system prompt is composed from three layers, in this order:
+
+1. **`FRAMEWORK_VALUES`** — the framework owner's non-negotiable content rules (currently: don't dispute scientific consensus, stay politically/religiously neutral, avoid divisive stances). This is a **code-only constant** in `src/components/generator/prompts.py` — it is never read from `params.cfg` or any instance file, and changing it requires a deliberate source edit, not a config flip.
+2. **`BASE_PROMPT`** — the generic RAG instructions (citation format, context-only answers, formatting) — the same for every deployment.
+3. **Instance guidelines** *(optional, off by default)* — your own deployment-specific guidance (tone, domain scope, formatting preferences), loaded from a plain text file:
+
+```ini
+[generator]
+instance_guidelines_path = instance_guidelines.txt   # empty/absent = none
+```
+
+If an instance guideline ever conflicts with a Framework Value, the composed prompt tells the model the Framework Value takes precedence.
+
+**Output-guard enforcement of these two layers is asymmetric, by design:** the windowed output classifier (above) always checks the answer against `FRAMEWORK_VALUES` (a violation always blocks, using `classification_message` — not configurable). It can *additionally* check compliance with your instance guidelines, but only under `mode = llm` (the `classifier`/Qwen3Guard-Gen backend is a fixed-taxonomy model and cannot evaluate custom instance text at all). The consequence for instance-guideline non-compliance is your own choice:
+
+```ini
+[output_guard]
+guideline_enforcement = off   # off (default) | warn (log only) | block (stop the stream, same as a framework violation)
+```
+
+This exists so a deployment can check its own rules against itself without ever being able to weaken the framework-values check — `guideline_enforcement` has no effect on Framework Values enforcement, which is always on.
 
 Pass API keys as environment variables at runtime:
 

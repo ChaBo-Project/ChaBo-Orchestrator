@@ -60,14 +60,11 @@ class InputGuardClient:
         classifier_model: str = DEFAULT_CLASSIFIER_MODEL,
         hf_token: Optional[str] = None,
         llm_client: Any = None,
-        generator: Any = None,  # deprecated alias for llm_client (kept for backward compat)
         timeout_s: float = 2.0,
         block_controversial: bool = False,
     ):
         self.mode = mode
         self.timeout_s = timeout_s
-        # `llm` mode uses LLMClient; `generator=` maintained for legacy cases.
-        llm = llm_client if llm_client is not None else generator
         # Build the shared classification backend (validates the active mode's config).
         self.backend = build_guard_backend(
             mode,
@@ -75,7 +72,7 @@ class InputGuardClient:
             endpoint=classifier_endpoint,
             model=classifier_model,
             hf_token=hf_token,
-            llm_client=llm,
+            llm_client=llm_client,
             prompt_builder=build_input_guard_messages,
         )
 

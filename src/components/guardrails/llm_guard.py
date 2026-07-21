@@ -38,11 +38,20 @@ Severity = Literal["safe", "unsafe", "controversial", "unknown"]
 @dataclass
 class GuardVerdict:
     """Result of an LLM-guard classification."""
-    safe: bool                 # False: block
+    safe: bool                 # False: block. Driven ONLY by FRAMEWORK_VALUES + harmful-content
+                                # checks — never affected by instance guidelines or config.
     severity: Severity         # "safe" | "unsafe" | "controversial" | "unknown"
     category: str              # e.g. "Jailbreak", "Violent", "None" (logging only)
     fallback_used: bool = False  # True if the guard errored/timed out
     notes: Dict[str, Any] = field(default_factory=dict)
+    # Secondary, independent signal: does the answer follow this deployment's own
+    # INSTANCE_GUIDELINES? None = not evaluated (classifier mode never checks this;
+    # llm mode leaves it None when no instance guidelines are configured, or if the
+    # judge's response omitted/malformed the field — always fails open on this field
+    # alone, never on `safe` above). Consequence is deployment-configurable via
+    # [output_guard] guideline_enforcement — see OutputClassificationConfig.
+    guideline_compliant: Optional[bool] = None
+    guideline_note: str = ""
 
 
 def decide_safe(severity: str, block_controversial: bool) -> bool:
@@ -59,10 +68,20 @@ def decide_safe(severity: str, block_controversial: bool) -> bool:
 
 def parse_llm_guard_verdict(raw: str, block_controversial: bool) -> GuardVerdict:
     """
-    Parse an `llm`-mode JSON verdict: {"verdict": "...", "category": "..."}.
+    Parse an `llm`-mode JSON verdict: {"verdict": "...", "category": "...",
+    "guideline_compliant": true|false, "guideline_note": "..."}. The last two keys are
+    optional and only ever requested when instance guidelines are configured (see
+    build_output_classification_messages).
 
     Tolerates ```json fences.
-    Raises ValueError on unparseable / shapeless output (mapped to the fail-policy).
+    Raises ValueError on unparseable / shapeless output for `verdict`/`category`
+    (mapped to the fail-policy) — this is the primary, non-negotiable signal.
+
+    `guideline_compliant`/`guideline_note` are parsed separately and can NEVER raise:
+    a missing, malformed, or judge-omitted field just leaves guideline_compliant=None
+    ("not evaluated"), without affecting the verdict above in any way. A flaky judge
+    that drops this field silently loses guideline-checking for that call, but never
+    weakens the framework-values enforcement.
 
     NOTE: JSON is used because it is portable across different inference providers.
     """
@@ -74,11 +93,18 @@ def parse_llm_guard_verdict(raw: str, block_controversial: bool) -> GuardVerdict
     category = str(parsed.get("category") or "none")
     if verdict not in ("safe", "unsafe", "controversial"):
         raise ValueError(f"unexpected verdict value: {verdict!r}")
+
+    guideline_raw = parsed.get("guideline_compliant")
+    guideline_compliant = guideline_raw if isinstance(guideline_raw, bool) else None
+    guideline_note = str(parsed.get("guideline_note") or "")
+
     return GuardVerdict(
         safe=decide_safe(verdict, block_controversial),
         severity=verdict,
         category=category,
         notes={"raw": (raw or "")[:500]},
+        guideline_compliant=guideline_compliant,
+        guideline_note=guideline_note,
     )
 
 

@@ -8,7 +8,7 @@ import asyncio
 from langchain_core.messages import SystemMessage, HumanMessage
 from ..utils import getconfig, get_config_value
 from ..llm import LLMClient, build_llm_client
-from .prompts import system_prompt, build_messages
+from .prompts import build_system_prompt, build_messages
 from .sources import (
     process_context, parse_citations, 
     extract_sources, create_sources_list, clean_citations
@@ -29,7 +29,8 @@ class Generator:
         "link_metadata_field":      ("generator", "LINK_META_FIELD", "GENERATOR_LINK_META_FIELD", "url")
     }
 
-    def __init__(self, config_path: str = "params.cfg", llm_client: Optional[LLMClient] = None, **kwargs):
+    def __init__(self, config_path: str = "params.cfg", llm_client: Optional[LLMClient] = None,
+                 instance_guidelines: str = "", **kwargs):
         logger.info("Initializing Generator component with config precedence...")
 
         # 2. Load Configuration
@@ -65,6 +66,9 @@ class Generator:
         # 4. Inference layer
         # Use LLMClient or build the default generation client.
         self.llm_client = llm_client if llm_client is not None else build_llm_client(config_file, "generation")
+
+        # 5. System prompt: FRAMEWORK_VALUES + BASE_PROMPT + optional instance_guidelines.
+        self.system_prompt = build_system_prompt(instance_guidelines)
 
         logger.info(f"Generator initialized with provider: {self.llm_client.provider}, model: {self.llm_client.model}")
         logger.debug(f"Metadata Config: Context={self.context_metadata_fields}, Title={self.title_metadata_fields}")
@@ -120,7 +124,7 @@ class Generator:
                metadata_fields_to_include=self.context_metadata_fields)
 
             # 2. Build Messages (with system prompt and optional conversation history)
-            messages = build_messages(system_prompt, query, formatted_context, conversation_context)
+            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context)
 
 
 
@@ -164,7 +168,7 @@ class Generator:
                             metadata_fields_to_include =self.context_metadata_fields)
 
             # 2. Build Messages (with system prompt and optional conversation history)
-            messages = build_messages(system_prompt, query, formatted_context, conversation_context)
+            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context)
 
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""

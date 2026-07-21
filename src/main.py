@@ -18,6 +18,7 @@ from components.orchestration.state import ChatUIInput, ChatUIFileInput
 from components.utils import getconfig
 from components.retriever.filters import FILTER_VALUES
 from components.rewriter.db_context import load_db_context, DBContext
+from components.generator.prompts import load_instance_guidelines
 from components.guardrails.input_guard import InputGuardClient
 from components.guardrails.output_guard import load_compiled_blocklist
 from components.guardrails.output_classification import OutputClassificationConfig, build_output_classification_messages
@@ -68,9 +69,15 @@ if REWRITER_ENABLED:
 logger.info("Initializing ChaBoHFEndpointRetriever and per-task LLM clients...")
 retriever_instance = create_retriever_from_config(config_file="params.cfg")
 
+# Instance-specific system prompt guidelines (optional — empty/absent = none, framework
+# defaults + base prompt only). See FRAMEWORK_VALUES in components/generator/prompts.py
+# for the non-negotiable, code-only defaults this can never override.
+INSTANCE_GUIDELINES_PATH = config.get("generator", "instance_guidelines_path", fallback="").strip()
+INSTANCE_GUIDELINES = load_instance_guidelines(INSTANCE_GUIDELINES_PATH)
+
 # Get module-specific LLM configs
 generation_client = build_llm_client(config, "generation")
-generator_instance = Generator(llm_client=generation_client)
+generator_instance = Generator(llm_client=generation_client, instance_guidelines=INSTANCE_GUIDELINES)
 
 filter_extraction_client = build_llm_client(config, "filter_extraction") if FILTERABLE_FIELDS else None
 query_rewrite_client = build_llm_client(config, "query_rewrite") if REWRITER_ENABLED else None
@@ -108,6 +115,14 @@ if INPUT_GUARD_ENABLED:
 OUTPUT_CLASSIFICATION_ENABLED = config.getboolean("output_guard", "classification_enabled", fallback=False)
 OUTPUT_CLASSIFICATION_MODE = config.get("output_guard", "mode", fallback="llm").strip()
 OUTPUT_CLASSIFICATION_BLOCK_CTRL = config.getboolean("output_guard", "block_controversial", fallback=True)
+# Consequence for instance-guideline non-compliance (independent of framework-values
+# blocking above, which is always enforced). Only meaningful under mode=llm — the
+# classifier backend never evaluates instance guidelines at all.
+GUIDELINE_ENFORCEMENT = config.get("output_guard", "guideline_enforcement", fallback="off").strip().lower()
+if GUIDELINE_ENFORCEMENT not in ("off", "warn", "block"):
+    raise ValueError(
+        f"[output_guard] guideline_enforcement must be 'off', 'warn', or 'block', got {GUIDELINE_ENFORCEMENT!r}"
+    )
 output_classification_config = None
 if OUTPUT_CLASSIFICATION_ENABLED:
     if OUTPUT_CLASSIFICATION_MODE == "classifier":
@@ -126,13 +141,14 @@ if OUTPUT_CLASSIFICATION_ENABLED:
             "llm",
             block_controversial=OUTPUT_CLASSIFICATION_BLOCK_CTRL,
             llm_client=build_llm_client(config, "output_classification"),
-            prompt_builder=build_output_classification_messages,
+            prompt_builder=partial(build_output_classification_messages, instance_guidelines=INSTANCE_GUIDELINES),
         )
     output_classification_config = OutputClassificationConfig(
         backend=classification_backend,
         window_chars=config.getint("output_guard", "window_chars", fallback=600),
         notice=config.get("output_guard", "classification_message", fallback="[response withheld]"),
         timeout_s=config.getfloat("output_guard", "timeout_s", fallback=5.0),
+        guideline_enforcement=GUIDELINE_ENFORCEMENT,
     )
     logger.info(f"Output classifier enabled (mode={OUTPUT_CLASSIFICATION_MODE}, window_chars={output_classification_config.window_chars})")
 
