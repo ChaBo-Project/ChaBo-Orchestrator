@@ -17,6 +17,7 @@ from components.generator.prompts import build_filter_extraction_messages, build
 if TYPE_CHECKING:
     from components.retriever.retriever_orchestrator import ChaBoHFEndpointRetriever
     from components.generator.generator_orchestrator import Generator
+    from components.llm import LLMClient
     from components.orchestration.state import GraphState
     from components.rewriter.db_context import DBContext
 
@@ -248,7 +249,7 @@ def _parse_filter_response(
 
 async def extract_filters_node(
     state: "GraphState",
-    generator: "Generator",
+    llm_client: "LLMClient",
     filterable_fields: Dict[str, str],
     filter_values: Dict[str, list],
 ) -> "GraphState":
@@ -272,7 +273,7 @@ async def extract_filters_node(
 
     try:
         messages = build_filter_extraction_messages(filterable_fields, filter_values, query, user_messages_history)
-        raw = await generator._call_llm(messages)
+        raw = await llm_client.ainvoke(messages)
         filters = _parse_filter_response(raw, filterable_fields)
     except Exception as e:
         logger.warning(f"extract_filters_node: LLM call failed ({e}). Proceeding without filters.")
@@ -317,7 +318,7 @@ def _parse_rewrite_response(raw_response: str) -> Optional[Dict[str, Any]]:
 
 async def rewrite_query_node(
     state: "GraphState",
-    generator: "Generator",
+    llm_client: "LLMClient",
     db_context: "DBContext",
     *,
     writer,
@@ -348,7 +349,7 @@ async def rewrite_query_node(
 
     try:
         messages = build_query_rewrite_messages(db_context, original_query, conversation_context)
-        raw = await generator._call_llm(messages)
+        raw = await llm_client.ainvoke(messages)
         parsed = _parse_rewrite_response(raw)
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()
@@ -416,106 +417,89 @@ async def rewrite_query_node(
     }
 
 
-# from .state import GraphState
+async def input_guard_node(
+    state: "GraphState",
+    guard_client,  # InputGuardClient (injected)
+    *,
+    writer,
+) -> "GraphState":
+    """
+    Classify raw user query for prompt-injection/jailbreak + harmful content.
+
+    When 'unsafe' set guard_blocked=True which triggers blocked_response via conditional edge.
+    """
+    start_time = datetime.now()
+    query = state.get("query", "") or ""
+
+    verdict = await guard_client.classify(query)
+    duration = (datetime.now() - start_time).total_seconds()
+
+    notes = dict(verdict.notes)
+    notes.update({"duration": duration, "mode": guard_client.mode})
+
+    logger.info(
+        f"input_guard_node: severity={verdict.severity} category={verdict.category} "
+        f"blocked={not verdict.safe} fallback={verdict.fallback_used} ({duration:.2f}s)"
+    )
+
+    # Observability
+    try:
+        writer({
+            "event": "guard_checked",
+            "data": {
+                "severity": verdict.severity,
+                "category": verdict.category,
+                "blocked": not verdict.safe,
+                "fallback_used": verdict.fallback_used,
+            },
+        })
+    except Exception:
+        pass  # writer may be unavailable in some test contexts
+
+    return {
+        "guard_verdict": verdict.severity,
+        "guard_blocked": not verdict.safe,
+        "guard_category": verdict.category,
+        "guard_mode_used": guard_client.mode,
+        "guard_fallback_used": verdict.fallback_used,
+        "guard_notes": notes,
+    }
 
 
-# if TYPE_CHECKING:
-#     from components.retriever.retriever_orchestrator import RetrieverOrchestrator
-#     from components.orchestration.state import GraphState
-
-# async def retrieve_node(
-#     state: GraphState, 
-#     retriever: 'RetrieverOrchestrator' # Injected service instance
-#     ) -> GraphState:
-#     """Retrieve relevant context using adapter"""
-    
-#     start_time = datetime.now()
-#     logger.info(f"Retrieval: {state['query'][:50]}...")
-#     context = ""
-
-#     try:
-#         # Get filters from state (provided by ChatUI or LLM agent)
-#         filters = state.get("metadata_filters")
-        
-#         # --- FILLED CODE START ---
-        
-#         # Call the async method on the injected service instance
-#         # The retriever orchestrator handles the remote API call to the Reranker/Embedder service
-        
-#         context_docs, retriever_meta = await retriever.aretrieve(
-#             query=latest_message,
-#             filters=filters
-#         )
-        
-#         # Format the retrieved documents into a single context string 
-#         # (This is commonly done here or inside the orchestrator)
-#         context = "\n---\n".join([doc.page_content for doc in context_docs])
-        
-#         # --- FILLED CODE END ---
-        
-#         duration = (datetime.now() - start_time).total_seconds()
-#         metadata = state.get("metadata", {})
-        
-#         # Update metadata and append retriever-specific metadata
-#         metadata.update({
-#             "retrieval_duration": duration,
-#             "context_length": len(context) if context else 0,
-#             "retrieval_success": True,
-#             "filters_applied": filters,
-#             "retriever_config": retriever_meta, # Add metadata from retriever call
-#         })
-        
-#         # Return the updated state
-#         return {"context": context, "metadata": metadata}
-    
-#     except Exception as e:
-#         # ... (Error handling logic is good, no change needed) ...
-#         duration = (datetime.now() - start_time).total_seconds()
-#         logger.error(f"Retrieval failed: {str(e)}")
-        
-#         metadata = state.get("metadata", {})
-#         metadata.update({
-#             "retrieval_duration": duration,
-#             "retrieval_success": False,
-#             "retrieval_error": str(e)
-#         })
-#         # Note: We return context as an empty string on failure to avoid cascading errors
-#         return {"context": "", "metadata": metadata}
+async def guard_gate_node(state: "GraphState") -> "GraphState":
+    """
+    Both the guard branch and the main branch (rewrite_query → extract_filters) flow into this node,
+    so LangGraph runs it only after BOTH complete. 
+    It's just a pass-through for the main branch - unless the conditional edge reads guard_blocked from state.
+    """
+    return {}
 
 
-# async def retrieve_node(state: GraphState) -> GraphState:
-#     """Retrieve relevant context using adapter"""
-#     start_time = datetime.now()
-#     logger.info(f"Retrieval: {state['query'][:50]}...")
-    
-#     try:
-#         # Get filters from state (provided by ChatUI or LLM agent)
-#         filters = state.get("metadata_filters")
-        
-#         # instantiate the retirever instance
-#         # get context using aysnc call
-        
-        
-#         duration = (datetime.now() - start_time).total_seconds()
-#         metadata = state.get("metadata", {})
-#         metadata.update({
-#             "retrieval_duration": duration,
-#             "context_length": len(context) if context else 0,
-#             "retrieval_success": True,
-#             "filters_applied": filters,
-#             "retriever_config": # get metadata from retirever
-#         })
-        
-#         return {"context": context, "metadata": metadata}
-    
-#     except Exception as e:
-#         duration = (datetime.now() - start_time).total_seconds()
-#         logger.error(f"Retrieval failed: {str(e)}")
-        
-#         metadata = state.get("metadata", {})
-#         metadata.update({
-#             "retrieval_duration": duration,
-#             "retrieval_success": False,
-#             "retrieval_error": str(e)
-#         })
-#         return {"context": "", "metadata": metadata}
+def _route_after_guard(state):
+    """
+    Conditional router: block if the input was flagged.
+    """
+    return "blocked" if state.get("guard_blocked") else "continue"
+
+
+async def blocked_response_node(
+    state: "GraphState",
+    blocked_message: str,
+    *,
+    writer,
+) -> "GraphState":
+    """
+    Return static warning for a blocked input and end the pipeline.
+
+    NOTE: Chatui friendly - same streaming event shape as generate_node_streaming so the
+    existing adapters render it with no special handling.
+    """
+    logger.info(
+        f"blocked_response_node: input blocked "
+        f"(category={state.get('guard_category')}, severity={state.get('guard_verdict')})"
+    )
+    writer({"event": "data", "data": blocked_message})
+    writer({"event": "final_answer", "data": {"text": blocked_message, "webSources": []}})
+    writer({"event": "end", "data": {}})
+    return {}
+

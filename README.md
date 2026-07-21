@@ -1,27 +1,33 @@
 # ChaBo
 
-A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, LangChain, and LangGraph. ChaBo orchestrates embedding, vector search, reranking, and LLM generation to answer queries using retrieved context.
+A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, LangChain, and LangGraph. ChaBo orchestrates embedding, vector search, reranking, and LLM generation to answer queries using retrieved context. It also supports query rewriting (including cross-lingual), LLM-based metadata filtering, and optional input/output safety guardrails.
 
 ## Architecture
 
 ```
 ┌─────────────┐     ┌────────────────────────────────────────────────────────┐
 │   ChatUI    │────▶│                        ChaBo                           │
-│  (Frontend) │     │  ┌─────────┐   ┌──────────────┐   ┌───────────────┐   │
-└─────────────┘     │  │ Embed   │──▶│ Smart Search │──▶│    Rerank     │   │
-                    │  │ (HF)    │   │   (Qdrant)   │   │    (HF)       │   │
-                    │  └─────────┘   └──────▲───────┘   └───────┬───────┘   │
-                    │                       │                   │           │
-                    │               ┌───────┴──────┐   ┌───────▼────────┐   │
-                    │               │   Extract    │   │    Generate    │   │
-                    │               │  Filters*    │   │  (Multi-LLM)  │   │
-                    │               └──────────────┘   └────────────────┘   │
+│  (Frontend) │     │  ┌─────────┐   ┌──────────────┐   ┌───────────────┐    │
+└─────────────┘     │  │ Embed   │──▶│ Smart Search │──▶│    Rerank     │    │
+                    │  │ (HF)    │   │   (Qdrant)   │   │    (HF)       │    │
+                    │  └─────────┘   └──────▲───────┘   └───────┬───────┘    │
+                    │                       │                   │            │
+                    │               ┌───────┴──────┐   ┌───────▼────────┐    │
+                    │               │   Extract    │   │    Generate    │    │
+                    │               │  Filters*    │   │  (Multi-LLM)   │    │
+                    │               └──────────────┘   └────────────────┘    │
                     └────────────────────────────────────────────────────────┘
 ```
 
-**Pipeline:** Query → Embed → Extract Filters* → Smart Search → Rerank → Generate (with citations)
+**Pipeline:** Query → [Input Guard*] → [Rewrite*] → Extract Filters* → Smart Search → Rerank → Generate → [Output Guard*] (with citations)
 
-> **Smart Search** applies LLM-extracted metadata filters to narrow Qdrant results before reranking. Filters are pulled from the current query, with conversation history as fallback. When filters are applied, ChatUI displays a footnote at the end of each response (e.g. *🔍 Searched within: category: news · lang: en*) — including a note if the AND-safeguard fired and narrowed the filter to the priority field. `*` Activated only when `filterable_fields` is configured under `[metadata_filters]` in `params.cfg` — omit or leave empty for standard unfiltered search.
+> Stages marked `*` are optional and configured in `params.cfg`; all are off unless enabled.
+
+> **Smart Search** applies LLM-extracted metadata filters to narrow Qdrant results before reranking. Filters are pulled from the current query, with conversation history as fallback. When filters are applied, ChatUI displays a footnote at the end of each response (e.g. *🔍 Searched within: category: news · lang: en*) — including a note if the AND-safeguard fired and narrowed the filter to the priority field. Activated only when `filterable_fields` is configured under `[metadata_filters]` in `params.cfg` — omit or leave empty for standard unfiltered search.
+
+> **Query rewriting** normalises the query (term/acronym expansion, pronoun resolution, query completion) and can translate it into the corpus language before retrieval. Grounded by `db_context.yaml`. Configured under `[query_rewriter]`.
+
+> **Guardrails** are two independent, opt-in defenses. The **input guard** classifies the query for prompt-injection/jailbreak and harmful content before retrieval (runs in parallel with rewrite/filter, ≈zero added latency); an unsafe verdict short-circuits to a fixed message. The **output guard** screens the streamed answer against a multilingual blocklist and replaces it with a notice on a hit. Configured under `[input_guard]` / `[output_guard]`.
 
 **Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere, Azure OpenAI
 
@@ -102,6 +108,93 @@ Fields stored as top-level keys or as JSON strings will not be found by the filt
 
 > Omit or leave `filterable_fields` empty to run standard unfiltered search — no `filters.py` changes needed.
 
+#### Query Rewriting & Guardrails Setup (optional)
+
+Three optional pipeline stages, all configured in `params.cfg` and **off by default**. Omit each section (or set `enabled = false`) to skip it.
+
+> **Upgrading from an earlier version:** each optional stage now uses its **own** independent LLM config (`llm_provider` / `llm_model`, etc.) under its own `params.cfg` section — there is no fallback to `[generator]` anymore. If you already have `[metadata_filters] filterable_fields` set and/or `[query_rewriter] enabled = true`, you must add `llm_provider` / `llm_model` (and, for HuggingFace, `llm_inference_provider` / `llm_organization`) under those same sections before upgrading, or ChaBo will fail to start. The startup error names the exact missing key, e.g. `LLM config missing: [metadata_filters] llm_provider (or env FILTER_EXTRACTION_LLM_PROVIDER) is required.` See the example blocks below for the full set of keys each stage expects.
+>
+> **No implicit reuse of `[generator]` across stages, ever — not even as a fallback.** This isn't just an upgrade-time gotcha: there is no mechanism, now or later, where an unconfigured guard/filter/rewriter stage silently falls back to the main generation model. If you want the input guard (or output classifier, filter extraction, query rewriter) to run on the *same* underlying model/endpoint you already use for generation, you must explicitly repeat those same `provider` / `model` values (and any provider-specific fields, e.g. `inference_provider` / `organization` for HuggingFace) under that stage's own section — copy-paste, not inheritance. An unconfigured stage that's turned on fails to start rather than quietly reusing `[generator]`.
+
+**Query rewriter** — normalises the query and optionally translates it into the corpus language before retrieval:
+
+```ini
+[query_rewriter]
+enabled = true
+db_context_path = db_context.yaml   # grounding: corpus abstract + glossary (repo root)
+target_language =                   # ISO code (e.g. "ar") for cross-lingual rewriting; empty to disable
+```
+
+`db_context.yaml` grounds the rewriter in your domain. With an empty abstract/glossary it runs in conservative mode (pronoun/filler/language normalisation only) and logs a startup warning.
+
+**Input guard** — classifies the query before retrieval; an unsafe verdict short-circuits to `blocked_message`:
+
+```ini
+[input_guard]
+enabled = true
+mode = llm                    # 'llm' = in-context classification via its own LLM (see llm_* below); 'classifier' calls a Qwen3Guard-Gen endpoint
+endpoint_url =                 # required for mode = classifier, e.g. http://qwen3guard:8000
+model = Qwen/Qwen3Guard-Gen-0.6B
+llm_provider = huggingface     # required for mode = llm — its own independent LLM config, no fallback to [generator]
+llm_model = ...
+llm_max_tokens = 64
+llm_temperature = 0.0
+block_controversial = false
+timeout_s = 2.0                # on timeout/error the guard fails open (allows the query)
+blocked_message = I'm sorry, but I can't help with that request.
+```
+
+> `mode = llm` needs no extra infrastructure beyond its own `llm_*` config above, but its latency tracks that model — set `timeout_s` above its typical response time or the guard will time out and fail open (silently disabling protection). It does **not** reuse `[generator]`'s model — see the note above. `mode = classifier` needs a Qwen3Guard-Gen endpoint (see the `guard` Compose profile below).
+
+**Output guard** — two independent sub-features, both off by default, applied to the streamed answer:
+
+```ini
+[output_guard]
+# 1. Windowed classification — re-classifies a sliding window of the streamed
+#    answer as it's generated; a hit stops the stream and classification_message
+#    replaces it. Same mode/backend choice as the input guard.
+classification_enabled = true
+mode = llm                     # 'llm' or 'classifier', same semantics as input_guard
+endpoint_url =                 # required for mode = classifier
+model = Qwen/Qwen3Guard-Gen-0.6B
+llm_provider = huggingface     # required for mode = llm — its own independent LLM config
+llm_model = ...
+window_chars = 200             # re-classify every N new chars of the answer
+block_controversial = true
+timeout_s = 5.0
+classification_message = This application is not able to answer certain queries. Please try again.
+
+# 2. Keyword blocklist — screens the stream against a multilingual term list
+#    (Arabic-aware normalisation + CJK/Thai substring matching).
+blocklist_enabled = true
+blocklist_path = src/components/guardrails/blocklist.txt
+blocklist_message = There was an error in the output. Please try again.
+```
+
+#### System Prompt: Framework Values vs Instance Guidelines
+
+The generator's system prompt is composed from three layers, in this order:
+
+1. **`FRAMEWORK_VALUES`** — the framework owner's non-negotiable content rules (currently: don't dispute scientific consensus, stay politically/religiously neutral, avoid divisive stances). This is a **code-only constant** in `src/components/generator/prompts.py` — it is never read from `params.cfg` or any instance file, and changing it requires a deliberate source edit, not a config flip.
+2. **`BASE_PROMPT`** — the generic RAG instructions (citation format, context-only answers, formatting) — the same for every deployment.
+3. **Instance guidelines** *(optional, off by default)* — your own deployment-specific guidance (tone, domain scope, formatting preferences), loaded from a plain text file:
+
+```ini
+[generator]
+instance_guidelines_path = instance_guidelines.txt   # empty/absent = none
+```
+
+If an instance guideline ever conflicts with a Framework Value, the composed prompt tells the model the Framework Value takes precedence.
+
+**Output-guard enforcement of these two layers is asymmetric, by design:** the windowed output classifier (above) always checks the answer against `FRAMEWORK_VALUES` (a violation always blocks, using `classification_message` — not configurable). It can *additionally* check compliance with your instance guidelines, but only under `mode = llm` (the `classifier`/Qwen3Guard-Gen backend is a fixed-taxonomy model and cannot evaluate custom instance text at all). The consequence for instance-guideline non-compliance is your own choice:
+
+```ini
+[output_guard]
+guideline_enforcement = off   # off (default) | warn (log only) | block (stop the stream, same as a framework violation)
+```
+
+This exists so a deployment can check its own rules against itself without ever being able to weaken the framework-values check — `guideline_enforcement` has no effect on Framework Values enforcement, which is always on.
+
 Pass API keys as environment variables at runtime:
 
 | Variable | Required | Description |
@@ -154,6 +247,7 @@ Edit `docker-compose/.env`:
 | `COMPOSE_PROFILES` | No | Comma-separated profiles to enable (see table below) |
 | `TEI_EMBEDDING_MODEL` | If using local TEI | Model ID (default: `BAAI/bge-base-en-v1.5`) |
 | `TEI_RERANKER_MODEL` | If using local TEI | Model ID (default: `BAAI/bge-reranker-base`) |
+| `QWEN3GUARD_MODEL` | If using `guard` profile | Input-guard classifier model (default: `Qwen/Qwen3Guard-Gen-0.6B`) |
 
 Embedding and reranker endpoint URLs are configured in `params.cfg` under `[hf_endpoints]`. When using local TEI, set them to `http://tei-embedding:80` and `http://tei-reranker:80`.
 
@@ -172,10 +266,13 @@ Profiles add optional services on top of the base stack (ChaBo + ChatUI):
 |---------|---------------|----------|
 | `local` | `tei-embedding` (port 8081), `tei-reranker` (port 8082) | Self-hosted embedding and reranking instead of remote HF endpoints |
 | `infra` | `qdrant` (port 6333) | Local Qdrant instance instead of a remote one |
+| `guard` | `qwen3guard` (port 8000) | Local Qwen3Guard-Gen classifier for the input guard — only when `[input_guard] mode = classifier` |
 
 Set profiles in `.env` (e.g. `COMPOSE_PROFILES=local,infra`) or via the CLI.
 
 > **Important:** When using local TEI, the embedding model (`TEI_EMBEDDING_MODEL`) must match the model used to create your Qdrant collection. Mismatched models will produce poor search results.
+
+> **Classifier-mode input guard:** the `guard` profile serves Qwen3Guard-Gen via vLLM (GPU image by default). On CPU-only hosts, swap in a vLLM-CPU build or a llama.cpp GGUF server (e.g. `QuantFactory/Qwen3Guard-Gen-0.6B-GGUF`), and set `[input_guard] endpoint_url = http://qwen3guard:8000`. `mode = llm` needs no extra container.
 
 #### Build and Run
 
@@ -246,7 +343,7 @@ The `metadata` dict inside `payload` is where filterable fields live (see Metada
 
 When deploying to a server without HTTPS (e.g. a VPS accessed via IP address), ChatUI needs two settings to avoid 403 errors:
 
-1. Set `UI_ORIGIN` in `docker-compose/.env` to your server's URL (e.g. `http://your-server-ip:3000`). This tells SvelteKit the expected origin for CSRF protection.
+1. Set `ORIGIN` on the `chatui` service in `docker-compose/docker-compose.yml` to your server's URL (e.g. `http://your-server-ip:3000`) — uncomment the `environment:` block on that service. This tells SvelteKit the expected origin for CSRF protection.
 2. Uncomment `ALLOW_INSECURE_COOKIES=true` in `docker-compose/chatui.env.local`. This allows session cookies over plain HTTP.
 
 Not needed behind HTTPS (e.g. HuggingFace Spaces, or behind a reverse proxy with TLS).

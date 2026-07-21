@@ -80,7 +80,7 @@ async def run_case(generator, case):
     }
     result = await extract_filters_node(
         state=state,
-        generator=generator,
+        llm_client=generator.llm_client,
         filterable_fields=FILTERABLE_FIELDS,
         filter_values=FILTER_VALUES,
     )

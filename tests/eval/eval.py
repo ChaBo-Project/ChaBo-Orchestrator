@@ -123,7 +123,7 @@ async def evaluate_questions(
             state = {"query": case.question, "user_messages_history": case.user_messages_history}
             result_state = await extract_filters_node(
                 state,
-                generator=generator,
+                llm_client=generator.llm_client,
                 filterable_fields=filterable_fields,
                 filter_values=filter_values,
             )
