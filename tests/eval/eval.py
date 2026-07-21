@@ -1,11 +1,13 @@
 import asyncio
 import configparser
+import csv
 import re
 import sys
 import os
 import json
 import pandas as pd
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import List, Dict, Optional
 from ragas.run_config import RunConfig
 
@@ -575,16 +577,39 @@ async def run_ragas_eval(filters_enabled: bool):
                       run_config=RunConfig(max_workers=2, timeout=900),)
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    output_path = _result_path("ragas_report", filters_enabled)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = "_filtered" if filters_enabled else ""
+    output_path = os.path.join(RESULTS_DIR, f"ragas_report_{timestamp}{suffix}.json")
+
     scores_df = result.to_pandas()
     scores_df.to_json(output_path, orient="records", indent=4, force_ascii=False)
 
     score_cols = [c for c in scores_df.columns if c not in ("user_input", "response", "retrieved_contexts", "reference")]
+    avg_scores = {col: round(float(scores_df[col].mean()), 4) for col in score_cols}
+
     print("\n📊 RAGAS Summary (averages):")
-    for col in score_cols:
-        print(f"   {col}: {scores_df[col].mean():.3f}")
+    for col, val in avg_scores.items():
+        print(f"   {col}: {val:.3f}")
+
+    history_path = os.path.join(RESULTS_DIR, "ragas_history.csv")
+    history_exists = os.path.exists(history_path)
+    history_row = {
+        "timestamp": timestamp,
+        "filters_enabled": filters_enabled,
+        "judge_provider": ragas_config.get("ragas", "JUDGE_PROVIDER").strip(),
+        "judge_model": ragas_config.get("ragas", "JUDGE_MODEL").strip(),
+        "num_cases": len(samples),
+        **avg_scores,
+    }
+    with open(history_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=history_row.keys())
+        if not history_exists:
+            writer.writeheader()
+        writer.writerow(history_row)
 
     print(f"\n✅ RAGAS report saved to {output_path}")
+    print(f"📈 History updated at {history_path}")
     sys.exit(0)
 
 
