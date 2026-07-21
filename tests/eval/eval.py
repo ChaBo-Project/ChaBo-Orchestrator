@@ -440,13 +440,12 @@ def _build_ragas_llm(config: configparser.ConfigParser):
     elif provider == "cohere":
         from langchain_cohere import ChatCohere
         llm = ChatCohere(model=model)
-    elif provider == "azure":
-        from langchain_openai import AzureChatOpenAI
-        llm = AzureChatOpenAI(
-            azure_deployment=model,
-            azure_endpoint=config.get("ragas", "AZURE_ENDPOINT").strip(),
-            api_version="2024-02-01",
-        )
+    elif provider == "azure":                                                   
+        from langchain_openai import ChatOpenAI     
+        llm = ChatOpenAI(
+            model=model,
+            openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            base_url=config.get("ragas", "AZURE_ENDPOINT").strip(),)
     elif provider == "huggingface":
         from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
         endpoint = HuggingFaceEndpoint(
