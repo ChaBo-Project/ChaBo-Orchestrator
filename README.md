@@ -352,23 +352,29 @@ very low retrieval scores — a useful signal for out-of-domain queries.
 
 ## RAG Evaluation
 
-The `tests/eval/` directory contains scripts to evaluate retrieval and reranking quality using an LLM-as-judge approach. Like health checks, these run locally outside Docker with the venv active from the repo root.
+The `tests/eval/` directory contains scripts to evaluate retrieval, reranking, and answer quality. Like health checks, these run locally outside Docker with the venv active from the repo root.
 
 ### How it works
 
-Evaluation runs in two stages:
+Evaluation runs in stages — run them independently or in sequence:
 
-**Stage 1 — Retrieval** (`run_retrieval_only`)
+**Stage 1 — Retrieval** (`--mode retrieval`)
 Runs each question through the full retriever pipeline, capturing both raw vector search candidates and final reranked results. Output saved to `tests/eval/results/retrieval_eval_results.json`.
 
-**Stage 2 — LLM Judging** (`run_evaluation_batch`)
+**Stage 2 — LLM Judging** (`--mode batch`)
 Loads the retrieval results and uses the configured LLM to judge each retrieved document for relevance. Saves a judged report to `tests/eval/results/judged_eval_report.json`. Supports **checkpointing** — if interrupted, it resumes from where it left off.
+
+**Stage 3 — RAGAS** (`--mode ragas`)
+Runs the full pipeline end-to-end (retrieval + generation) and scores answer quality using [RAGAS](https://docs.ragas.io) metrics. Each run saves a timestamped JSON report to `tests/eval/results/` and appends a summary row to `tests/eval/results/ragas_history.csv` for tracking quality over time.
 
 ### Setup
 
 ```bash
 cd /path/to/chabo
 source chabo_env/bin/activate
+
+# For RAGAS mode only — install the extended dependencies
+pip install -r requirements-eval.txt
 ```
 
 ### Define your test questions
@@ -379,7 +385,14 @@ Edit `tests/eval/test_questions.py` to add your evaluation questions. Questions 
 - **`history_blocks`** — conversation sequences where later turns rely on filter carry-forward; only the last turn per block is evaluated
 - **`safeguard_questions`** — contradictory or unlikely field combinations that should trigger the AND-safeguard fallback
 
-Each entry includes an `expected_filters` field used for ground truth filter checking (see [Filter Ground Truth Checking](#filter-ground-truth-checking) below). Set it to the filter dict you expect the LLM to extract, or `None` if no filter is expected.
+Each entry supports the following fields:
+
+| Field | Required for | Description |
+|-------|-------------|-------------|
+| `question` / `turns` | all modes | The query or conversation turns |
+| `expected_filters` | retrieval, batch, sample | Ground truth metadata filters |
+| `expected_answer` | ragas | Rough ground truth answer string |
+| `expected_sources` | ragas | List of `{filename, page}` dicts for expected source documents |
 
 These should be realistic queries representative of what actual users ask — curated with knowledge of your corpus. The examples below assume an **agriculture knowledge base**; replace them with questions and filter values relevant to your own domain:
 
@@ -388,6 +401,8 @@ standalone_questions = [
     {
         "question": "What irrigation method is recommended for sugarcane on new land?",
         "expected_filters": {"crop": "sugarcane"},
+        "expected_answer": "Drip irrigation is recommended for sugarcane on new land...",
+        "expected_sources": [{"filename": "sugarcane_guide.pdf", "page": 12}],
     },
 ]
 
@@ -398,6 +413,8 @@ history_blocks = [
             "What are the recommended pesticide applications?",
         ],
         "expected_filters": {"crop": "wheat"},
+        "expected_answer": "Recommended pesticides for wheat include...",
+        "expected_sources": [{"filename": "wheat_manual.pdf", "page": 5}],
     },
 ]
 
@@ -405,9 +422,13 @@ safeguard_questions = [
     {
         "question": "What does the maize report on wheat fertilisation say?",
         "expected_filters": None,
+        "expected_answer": "The knowledge base does not contain a document combining those topics.",
+        "expected_sources": [],
     },
 ]
 ```
+
+Cases with `expected_answer` still set to `TODO` are skipped automatically in RAGAS mode.
 
 > **Note:** `test_questions.py` is for automated scoring via LLM-as-judge (`eval.py`).
 > For manual qualitative spot-checks with categorised scenarios, use
@@ -418,25 +439,43 @@ safeguard_questions = [
 Pass the `--mode` flag to select which stage to run, and `--filters` to enable metadata filter extraction:
 
 ```bash
-# Step 1: Run retrieval and save results
+# Stage 1: Run retrieval and save results
 python tests/eval/eval.py --mode retrieval
 
-# Step 1 with metadata filter extraction and ground truth checking
+# Stage 1 with metadata filter extraction and ground truth checking
 python tests/eval/eval.py --mode retrieval --filters
 
-# Step 2: Judge retrieved results with LLM (resumes from checkpoint if interrupted)
+# Stage 2: Judge retrieved results with LLM (resumes from checkpoint if interrupted)
 python tests/eval/eval.py --mode batch
-
-# Step 2 with filters (judges the filtered retrieval results)
 python tests/eval/eval.py --mode batch --filters
 
 # Quick sample run (first 2 questions only, useful for testing)
 python tests/eval/eval.py --mode sample
+
+# Stage 3: Full pipeline eval with RAGAS metrics
+python tests/eval/eval.py --mode ragas
+python tests/eval/eval.py --mode ragas --filters
 ```
 
 `--mode retrieval` is the default if no flag is provided.
 
 Results are saved to `tests/eval/results/` (gitignored). The `--filters` flag appends `_filtered` to all output filenames — compare `judged_eval_report.json` vs `judged_eval_report_filtered.json` to measure the impact of filtering on retrieval quality.
+
+### RAGAS configuration
+
+RAGAS mode uses a separate judge LLM configured in `tests/eval/ragas_config.cfg` — independent of the chatbot's generator in `params.cfg`:
+
+```ini
+[ragas]
+JUDGE_PROVIDER = your-provider        # openai, anthropic, cohere, azure, huggingface
+JUDGE_MODEL = your-model-name-or-url
+
+METRICS = faithfulness,answer_relevancy,context_recall,context_precision
+```
+
+Set the corresponding API key as an environment variable (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). RAGAS metrics rely on the judge model's reasoning ability — use a capable model for reliable scores.
+
+Each run produces a timestamped JSON with per-question scores (e.g. `ragas_report_20260721_143022.json`) and appends a summary row to `ragas_history.csv` for tracking quality trends across releases and feature updates.
 
 ### Filter Ground Truth Checking
 
