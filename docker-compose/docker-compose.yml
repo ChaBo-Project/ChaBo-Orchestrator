@@ -48,13 +48,43 @@ services:
       retries: 10
       start_period: 30s
 
+  # INPUT GUARDRAIL CLASSIFIER
+  # Opt-in via the "guard" profile
+  # only needed when [input_guard] mode=classifier. Qwen3Guard-Gen is a lightweight
+  # generative model served over an OpenAI-compatible API (vLLM).
+  # Point ChaBo at it with [input_guard] endpoint_url = http://qwen3guard:8000.
+  # The default image is GPU; for CPU-only hosts use a CPU/vLLM-CPU build or a
+  # llama.cpp GGUF server (e.g. QuantFactory/Qwen3Guard-Gen-0.6B-GGUF).
+  qwen3guard:
+    profiles: ["guard"]
+    image: vllm/vllm-openai:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+    volumes:
+      - qwen3guard-data:/root/.cache/huggingface
+    command: >
+      --model ${QWEN3GUARD_MODEL:-Qwen/Qwen3Guard-Gen-0.6B}
+      --host 0.0.0.0 --port 8000 --max-model-len 32768
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
   chabo:
-    # local embedding services can take a while to startup 
+    # local embedding services can take a while to startup
     depends_on:
         tei-embedding:
           condition: service_healthy
         tei-reranker:
           condition: service_healthy
+        # For classifier-mode input guard, also run `--profile guard` and uncomment:
+        # qwen3guard:
+        #   condition: service_healthy
+        #   required: false
     build:
       context: ..
       dockerfile: docker-compose/backend.Dockerfile
@@ -102,3 +132,4 @@ volumes:
   qdrant_data:
   tei-embedding-data:
   tei-reranker-data:
+  qwen3guard-data:

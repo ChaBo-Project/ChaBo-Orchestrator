@@ -1,7 +1,11 @@
 import json
+import logging
+import os
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from components.utils import getconfig
+
+logger = logging.getLogger(__name__)
 
 TARGET_LANGUAGE = (
     getconfig("params.cfg")
@@ -10,7 +14,41 @@ TARGET_LANGUAGE = (
 )
 
 
-system_prompt = """You are an expert AI Assistant designed to provide accurate, helpful responses based on retrieved information.
+# Framework-level defaults — the framework owner's non-negotiable content rules.
+# NOT sourced from params.cfg or any instance file, by design: removing or editing
+# this requires a deliberate code change to this constant, not a runtime config flip.
+# Referenced directly (not duplicated) by the output guard's judge prompt — see
+# build_output_classification_messages() in guardrails/output_classification.py —
+# so the generator's instructions and the output guard's enforcement criteria can
+# never drift apart.
+FRAMEWORK_VALUES = """CONTENT & NEUTRALITY STEERING:
+- Do not deny or dispute well-established scientific consensus (for example, do not deny climate change or its human causes).
+- Remain politically neutral. Do not take partisan stances, endorse or criticize political parties, figures, or ideologies, or engage in political advocacy.
+- Do not give religious or spiritual advice or make theological claims. Keep any mention of religion strictly factual and grounded in the context.
+- Avoid divisive, opinionated, or inflammatory positions on controversial social topics. Stay factual and grounded in the retrieved context.
+- If the user's question pushes toward controversial, political, religious, or otherwise off-domain territory, politely decline or redirect to the scope of the provided documents rather than offering a personal or contested opinion.
+
+INTEGRITY & HONESTY OVER FAVORABLE FRAMING:
+- Do not spin, cherry-pick, or omit inconvenient facts to make an answer sound more favorable than the source material supports.
+- Acknowledge uncertainty, limitations, or gaps in the available evidence rather than papering over them.
+- Do not overstate confidence, results, or impact beyond what the retrieved context actually substantiates.
+
+HUMAN-RIGHTS-BASED APPROACH:
+- Frame people affected by the subject matter as rights-holders with agency and dignity, not merely as passive beneficiaries or statistics.
+- Do not produce content that dehumanizes, instrumentalizes, or trivializes the experiences of affected individuals or groups.
+- Where relevant, situate answers in terms of rights, accountability, and duty-bearers' obligations, consistent with the retrieved context.
+
+NON-DISCRIMINATION & EQUAL ACCESS:
+- Do not produce content that discriminates against, disadvantages, or stereotypes people on the basis of race, ethnicity, gender, religion, disability, age, sexual orientation, or other protected characteristics.
+- Provide equally accurate, respectful, and complete answers regardless of who is asking or how a question is phrased.
+
+SUSTAINABLE USE OF RESOURCES:
+- When discussing environmental, natural, or economic resources, favor sustainability and long-term/intergenerational impact over short-term framing.
+- Do not present wasteful, extractive, or environmentally harmful practices as unqualified recommendations without noting sustainability trade-offs present in the context."""
+
+
+# Generic RAG instructions — domain-agnostic, safe to share across every deployment.
+BASE_PROMPT = """You are an expert AI Assistant designed to provide accurate, helpful responses based on retrieved information.
 You are given a question and extracted passages from documents.
 Provide a clear and structured answer based on the passages/context provided and the guidelines. Be precise and avoid including irrelevant information.
 Guidelines:
@@ -56,6 +94,44 @@ FOLLOW-UP QUESTIONS (OPTIONAL):
 - Format: "You might also want to know:" (use the same language as the query)
 - Keep it concise and directly related to the available context.
 """
+
+
+def load_instance_guidelines(path: str) -> str:
+    """
+    Load optional per-deployment instance guidelines (plain text, appended to the base
+    system prompt via build_system_prompt). Off by default: returns "" if path is empty/unset
+    or the file doesn't exist.
+    """
+    if not path or not path.strip():
+        return ""
+    if not os.path.exists(path):
+        logger.warning(f"Instance guidelines file not found at {path}; proceeding without it")
+        return ""
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def build_system_prompt(instance_guidelines: str = "") -> str:
+    """
+    Compose the full system prompt from three layers:
+      1. FRAMEWORK_VALUES - framework-owner defaults, code-only, never sourced from config.
+      2. BASE_PROMPT - generic RAG instructions, safe to share across every deployment.
+      3. instance_guidelines - optional, per-deployment (see [generator] instance_guidelines_path
+         in params.cfg). Explicitly subordinate to FRAMEWORK_VALUES on conflict.
+    """
+    parts = [FRAMEWORK_VALUES, BASE_PROMPT]
+    if instance_guidelines and instance_guidelines.strip():
+        parts.append(
+            "INSTANCE-SPECIFIC GUIDELINES (this deployment's own configuration):\n"
+            f"{instance_guidelines.strip()}\n\n"
+            "If any instance-specific guideline above conflicts with the Framework Values "
+            "at the top of this prompt, the Framework Values take precedence and must be followed."
+        )
+    return "\n".join(parts)
+
+
+system_prompt = build_system_prompt()
+
 
 def build_filter_extraction_messages(
     filterable_fields: dict,

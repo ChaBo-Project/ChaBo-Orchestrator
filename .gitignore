@@ -1,6 +1,7 @@
 .env
 .env.local
 *.DS_Store
+*:Zone.Identifier
 __pycache__/
 NOTES.md
 docker-compose/chatui.env.local
@@ -9,9 +10,14 @@ docker-compose/.env
 .chabo_env/
 chabo_env/
 CLAUDE.md
+FeatureAndPR/
 tests/eval/results/
 tests/health/logs/
 EVAL_PLAN.md
 query_rewriting_testdata.json
 test_rewrite_query.py
 *.bak
+test_input_guard.py
+test_input_guard_node.py
+test_output_guard.py
+test_guardrails.py

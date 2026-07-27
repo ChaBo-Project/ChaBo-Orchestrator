@@ -11,12 +11,18 @@ from functools import partial
 
 from components.retriever.retriever_orchestrator import create_retriever_from_config
 from components.generator.generator_orchestrator import Generator
+from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
 from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
 from components.utils import getconfig
 from components.retriever.filters import FILTER_VALUES
 from components.rewriter.db_context import load_db_context, DBContext
+from components.generator.prompts import load_instance_guidelines
+from components.guardrails.input_guard import InputGuardClient
+from components.guardrails.output_guard import load_compiled_blocklist
+from components.guardrails.output_classification import OutputClassificationConfig, build_output_classification_messages
+from components.guardrails.llm_guard import build_guard_backend, DEFAULT_CLASSIFIER_MODEL
 from typing import Dict
 
 config = getconfig("params.cfg")
@@ -60,9 +66,102 @@ if REWRITER_ENABLED:
              (no glossary-based expansion). Populate {DB_CONTEXT_PATH} to ground the rewriter.")
 
 # Initialize services
-logger.info("Initializing ChaBoHFEndpointRetriever and Generator...")
+logger.info("Initializing ChaBoHFEndpointRetriever and per-task LLM clients...")
 retriever_instance = create_retriever_from_config(config_file="params.cfg")
-generator_instance = Generator()
+
+# Instance-specific system prompt guidelines (optional — empty/absent = none, framework
+# defaults + base prompt only). See FRAMEWORK_VALUES in components/generator/prompts.py
+# for the non-negotiable, code-only defaults this can never override.
+INSTANCE_GUIDELINES_PATH = config.get("generator", "instance_guidelines_path", fallback="").strip()
+INSTANCE_GUIDELINES = load_instance_guidelines(INSTANCE_GUIDELINES_PATH)
+
+# Get module-specific LLM configs
+generation_client = build_llm_client(config, "generation")
+generator_instance = Generator(llm_client=generation_client, instance_guidelines=INSTANCE_GUIDELINES)
+
+filter_extraction_client = build_llm_client(config, "filter_extraction") if FILTERABLE_FIELDS else None
+query_rewrite_client = build_llm_client(config, "query_rewrite") if REWRITER_ENABLED else None
+
+# Get input guard config 
+INPUT_GUARD_ENABLED = config.getboolean("input_guard", "enabled", fallback=False)
+INPUT_GUARD_MODE = config.get("input_guard", "mode", fallback="llm").strip()
+INPUT_GUARD_ENDPOINT = config.get("input_guard", "endpoint_url", fallback="").strip()
+INPUT_GUARD_MODEL = config.get("input_guard", "model", fallback="Qwen/Qwen3Guard-Gen-0.6B").strip()
+INPUT_GUARD_BLOCK_CTRL = config.getboolean("input_guard", "block_controversial", fallback=False)
+INPUT_GUARD_TIMEOUT = config.getfloat("input_guard", "timeout_s", fallback=2.0)
+INPUT_GUARD_MSG = config.get(
+    "input_guard", "blocked_message", fallback="I'm sorry, but I can't help with that request."
+).strip()
+
+guard_client = None
+if INPUT_GUARD_ENABLED:
+    if INPUT_GUARD_MODE == "classifier" and not INPUT_GUARD_ENDPOINT:
+        raise ValueError("[input_guard] mode=classifier requires endpoint_url to be set.")
+    # Get module-specific LLM config
+    # Only for llm mode - classifier mode uses a dedicated model (ref. config)
+    input_guard_client = build_llm_client(config, "input_guard") if INPUT_GUARD_MODE == "llm" else None
+    guard_client = InputGuardClient(
+        mode=INPUT_GUARD_MODE,
+        classifier_endpoint=INPUT_GUARD_ENDPOINT,
+        classifier_model=INPUT_GUARD_MODEL,
+        hf_token=os.getenv("HF_TOKEN"),
+        llm_client=input_guard_client,
+        timeout_s=INPUT_GUARD_TIMEOUT,
+        block_controversial=INPUT_GUARD_BLOCK_CTRL,
+    )
+    logger.info(f"Input guard enabled (mode={INPUT_GUARD_MODE})")
+
+# Get output guard config — two independent elements: Classification (classifier or LLM) + keyword blocklist
+OUTPUT_CLASSIFICATION_ENABLED = config.getboolean("output_guard", "classification_enabled", fallback=False)
+OUTPUT_CLASSIFICATION_MODE = config.get("output_guard", "mode", fallback="llm").strip()
+OUTPUT_CLASSIFICATION_BLOCK_CTRL = config.getboolean("output_guard", "block_controversial", fallback=True)
+# Consequence for instance-guideline non-compliance (independent of framework-values
+# blocking above, which is always enforced). Only meaningful under mode=llm — the
+# classifier backend never evaluates instance guidelines at all.
+GUIDELINE_ENFORCEMENT = config.get("output_guard", "guideline_enforcement", fallback="off").strip().lower()
+if GUIDELINE_ENFORCEMENT not in ("off", "warn", "block"):
+    raise ValueError(
+        f"[output_guard] guideline_enforcement must be 'off', 'warn', or 'block', got {GUIDELINE_ENFORCEMENT!r}"
+    )
+output_classification_config = None
+if OUTPUT_CLASSIFICATION_ENABLED:
+    if OUTPUT_CLASSIFICATION_MODE == "classifier":
+        classification_endpoint = config.get("output_guard", "endpoint_url", fallback="").strip()
+        if not classification_endpoint:
+            raise ValueError("[output_guard] mode=classifier requires endpoint_url to be set.")
+        classification_backend = build_guard_backend(
+            "classifier",
+            block_controversial=OUTPUT_CLASSIFICATION_BLOCK_CTRL,
+            endpoint=classification_endpoint,
+            model=config.get("output_guard", "model", fallback=DEFAULT_CLASSIFIER_MODEL).strip(),
+            hf_token=os.getenv("HF_TOKEN"),
+        )
+    else:  # llm
+        classification_backend = build_guard_backend(
+            "llm",
+            block_controversial=OUTPUT_CLASSIFICATION_BLOCK_CTRL,
+            llm_client=build_llm_client(config, "output_classification"),
+            prompt_builder=partial(build_output_classification_messages, instance_guidelines=INSTANCE_GUIDELINES),
+        )
+    output_classification_config = OutputClassificationConfig(
+        backend=classification_backend,
+        window_chars=config.getint("output_guard", "window_chars", fallback=600),
+        notice=config.get("output_guard", "classification_message", fallback="[response withheld]"),
+        timeout_s=config.getfloat("output_guard", "timeout_s", fallback=5.0),
+        guideline_enforcement=GUIDELINE_ENFORCEMENT,
+    )
+    logger.info(f"Output classifier enabled (mode={OUTPUT_CLASSIFICATION_MODE}, window_chars={output_classification_config.window_chars})")
+
+# --- Keyword blocklist ---
+BLOCKLIST_ENABLED = config.getboolean("output_guard", "blocklist_enabled", fallback=False)
+BLOCKLIST_MESSAGE = config.get("output_guard", "blocklist_message", fallback="[response withheld]")
+blocklist = None
+if BLOCKLIST_ENABLED:
+    blocklist_path = config.get(
+        "output_guard", "blocklist_path", fallback="src/components/guardrails/blocklist.txt"
+    )
+    blocklist = load_compiled_blocklist(blocklist_path)
+    logger.info("Output blocklist enabled")
 
 # Build the LangGraph workflow
 compiled_graph = build_workflow(
@@ -72,6 +171,11 @@ compiled_graph = build_workflow(
     filter_values=FILTER_VALUES,
     db_context=db_context if REWRITER_ENABLED else None,
     rewriter_enabled=REWRITER_ENABLED,
+    guard_client=guard_client,
+    input_guard_enabled=INPUT_GUARD_ENABLED,
+    blocked_message=INPUT_GUARD_MSG,
+    filter_extraction_client=filter_extraction_client,
+    query_rewrite_client=query_rewrite_client,
 )
 
 
@@ -101,9 +205,11 @@ async def root():
 # LANGSERVE ROUTES
 #----------------------------------------
 
-# Inject compiled_graph and config into adapters
-text_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS)
-file_adapter = partial(chatui_file_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS)
+# Inject compiled_graph and config into adapters (blocklist=None when the blocklist is disabled)
+text_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
+                       blocklist=blocklist, blocklist_notice=BLOCKLIST_MESSAGE, classification_config=output_classification_config)
+file_adapter = partial(chatui_file_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
+                       blocklist=blocklist, blocklist_notice=BLOCKLIST_MESSAGE, classification_config=output_classification_config)
 
 # Text-only endpoint
 add_routes(
