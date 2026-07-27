@@ -8,7 +8,6 @@ import pandas as pd
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Optional
-from ragas.run_config import RunConfig
 
 # Add src/ to path so imports match how main.py resolves them
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
@@ -45,7 +44,7 @@ class EvalCase:
     user_messages_history: Optional[str]     # pre-built history string, None if not applicable
     expected_filters: Optional[Dict]         # ground truth filters, None if no filter expected
     expected_answer: Optional[str] = None    # rough ground truth answer for RAGAS scoring
-    expected_sources: Optional[List[Dict]] = field(default=None)  # expected {filename, page} dicts for RAGAS
+    expected_sources: Optional[List[Dict]] = field(default=None)  # expected {filename, page} dicts; ground-truth retrieval hit check (not currently consumed anywhere — see tech-debt note)
 
 
 def build_eval_suite() -> List[EvalCase]:
@@ -119,12 +118,23 @@ def _result_path(base: str, filtered: bool) -> str:
 def _append_history_row(history_path: str, row: Dict) -> None:
     """Append a row to the RAGAS history CSV, tolerating a metric set that changes across runs."""
     new_df = pd.DataFrame([row])
-    if os.path.exists(history_path):
-        existing_df = pd.read_csv(history_path)
+    existing_df = None
+    if os.path.exists(history_path) and os.path.getsize(history_path) > 0:
+        try:
+            existing_df = pd.read_csv(history_path)
+        except pd.errors.EmptyDataError:
+            existing_df = None
+
+    if existing_df is not None:
         combined_df = pd.concat([existing_df, new_df], ignore_index=True, sort=False)
     else:
         combined_df = new_df
-    combined_df.to_csv(history_path, index=False)
+
+    # Write atomically (temp file + rename) so a crash mid-write can't leave a
+    # truncated/empty CSV behind for the next run to trip over.
+    tmp_path = f"{history_path}.tmp"
+    combined_df.to_csv(tmp_path, index=False)
+    os.replace(tmp_path, history_path)
 
 
 async def evaluate_questions(
@@ -428,50 +438,28 @@ async def run_sample_eval(filters_enabled: bool, input_file=None):
     sys.exit(0)
 
 
-_RAGAS_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "ragas_config.cfg")
-
-
-def _load_ragas_config() -> configparser.ConfigParser:
-    config = configparser.ConfigParser(inline_comment_prefixes=("#",))
-    if not config.read(_RAGAS_CONFIG_PATH):
-        print(f"💥 ragas_config.cfg not found at {_RAGAS_CONFIG_PATH}")
-        sys.exit(1)
-    return config
-
-
 def _build_ragas_llm(config: configparser.ConfigParser):
     from ragas.llms import LangchainLLMWrapper
+    from components.llm import LLMClient
+    from components.utils import get_config_value
 
-    provider = config.get("ragas", "JUDGE_PROVIDER").strip().lower()
-    model = config.get("ragas", "JUDGE_MODEL").strip()
-
-    if provider == "openai":
-        from langchain_openai import ChatOpenAI
-        llm = ChatOpenAI(model=model)
-    elif provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-        llm = ChatAnthropic(model=model)
-    elif provider == "cohere":
-        from langchain_cohere import ChatCohere
-        llm = ChatCohere(model=model)
-    elif provider == "azure":                                                   
-        from langchain_openai import ChatOpenAI     
-        llm = ChatOpenAI(
-            model=model,
-            openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            base_url=config.get("ragas", "AZURE_ENDPOINT").strip(),)
-    elif provider == "huggingface":
-        from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-        endpoint = HuggingFaceEndpoint(
-            endpoint_url=model,
-            huggingfacehub_api_token=os.environ.get("HF_TOKEN"),
-        )
-        llm = ChatHuggingFace(llm=endpoint)
-    else:
-        print(f"💥 Unknown JUDGE_PROVIDER '{provider}'. Supported: openai, anthropic, cohere, azure, huggingface")
+    provider = get_config_value(config, "ragas", "JUDGE_PROVIDER", "RAGAS_JUDGE_PROVIDER")
+    model = get_config_value(config, "ragas", "JUDGE_MODEL", "RAGAS_JUDGE_MODEL")
+    if not provider or not model:
+        print("💥 [ragas] JUDGE_PROVIDER/JUDGE_MODEL not set in params.cfg.")
         sys.exit(1)
 
-    return LangchainLLMWrapper(llm)
+    llm_client = LLMClient(
+        provider=provider.strip().lower(),
+        model=model.strip(),
+        max_tokens=int(get_config_value(config, "ragas", "JUDGE_MAX_TOKENS", "RAGAS_JUDGE_MAX_TOKENS", fallback=1024)),
+        temperature=float(get_config_value(config, "ragas", "JUDGE_TEMPERATURE", "RAGAS_JUDGE_TEMPERATURE", fallback=0.1)),
+        inference_provider=get_config_value(config, "ragas", "INFERENCE_PROVIDER", "RAGAS_INFERENCE_PROVIDER", fallback=None),
+        organization=get_config_value(config, "ragas", "ORGANIZATION", "RAGAS_ORGANIZATION", fallback=None),
+        azure_endpoint=get_config_value(config, "ragas", "AZURE_ENDPOINT", "RAGAS_AZURE_ENDPOINT", fallback=None),
+        streaming=False,
+    )
+    return LangchainLLMWrapper(llm_client.chat_model)
 
 def _build_ragas_embeddings(retriever):
     from langchain_huggingface import HuggingFaceEndpointEmbeddings
@@ -497,12 +485,12 @@ def _build_ragas_metrics(config: configparser.ConfigParser, ragas_llm):
     metrics = []
     for name in metric_names:
         if name not in METRIC_MAP:
-            print(f"⚠️  Unknown metric '{name}' in ragas_config.cfg, skipping.")
+            print(f"⚠️  Unknown metric '{name}' in params.cfg [ragas], skipping.")
             continue
         metrics.append(METRIC_MAP[name](llm=ragas_llm))
 
     if not metrics:
-        print("💥 No valid metrics configured in ragas_config.cfg.")
+        print("💥 No valid metrics configured in params.cfg [ragas].")
         sys.exit(1)
 
     return metrics
@@ -511,8 +499,9 @@ def _build_ragas_metrics(config: configparser.ConfigParser, ragas_llm):
 async def run_ragas_eval(filters_enabled: bool):
     from ragas import evaluate
     from ragas.dataset_schema import SingleTurnSample, EvaluationDataset
+    from ragas.run_config import RunConfig
 
-    ragas_config = _load_ragas_config()
+    ragas_config = _config
     ragas_llm = _build_ragas_llm(ragas_config)
     metrics = _build_ragas_metrics(ragas_config, ragas_llm)
 

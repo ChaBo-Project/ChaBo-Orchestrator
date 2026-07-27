@@ -13,7 +13,9 @@
 #
 # expected_filters: dict matching the fields in params.cfg [metadata_filters], or None if no filter is expected.
 # expected_answer: rough ground truth string; used by RAGAS for context_recall and answer_relevancy.
-# expected_sources: list of dicts with "filename" and optional "page"; used by RAGAS for context_recall.
+# expected_sources: list of dicts with "filename" and optional "page"; ground-truth source(s) for this
+#   question. NOT currently read by any eval mode (RAGAS included) — reserved for a future deterministic
+#   retrieval-hit check (compare against retrieved doc metadata), separate from RAGAS's LLM-based metrics.
 
 # --- Subset 1: Standalone ---
 standalone_questions = [

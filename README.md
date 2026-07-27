@@ -471,7 +471,7 @@ cd /path/to/chabo
 source chabo_env/bin/activate
 
 # For RAGAS mode only — install the extended dependencies
-pip install -r requirements-eval.txt
+pip install -r tests/eval/requirements-eval.txt
 ```
 
 ### Define your test questions
@@ -489,7 +489,7 @@ Each entry supports the following fields:
 | `question` / `turns` | all modes | The query or conversation turns |
 | `expected_filters` | retrieval, batch, sample | Ground truth metadata filters |
 | `expected_answer` | ragas | Rough ground truth answer string |
-| `expected_sources` | ragas | List of `{filename, page}` dicts for expected source documents |
+| `expected_sources` | none (reserved) | List of `{filename, page}` dicts identifying the expected source document(s). Not currently read by any eval mode, including RAGAS — reserved for a future deterministic retrieval-hit check |
 
 These should be realistic queries representative of what actual users ask — curated with knowledge of your corpus. The examples below assume an **agriculture knowledge base**; replace them with questions and filter values relevant to your own domain:
 
@@ -560,7 +560,7 @@ Results are saved to `tests/eval/results/` (gitignored). The `--filters` flag ap
 
 ### RAGAS configuration
 
-RAGAS mode uses a separate judge LLM configured in `tests/eval/ragas_config.cfg` — independent of the chatbot's generator in `params.cfg`:
+RAGAS mode uses a separate judge LLM configured in `params.cfg`'s `[ragas]` section — independent of the chatbot's generator's `[generator]` section, to avoid self-preference bias in scoring:
 
 ```ini
 [ragas]
