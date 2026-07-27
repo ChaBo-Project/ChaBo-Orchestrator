@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from components.retriever.retriever_orchestrator import create_retriever_from_config
 from components.generator.generator_orchestrator import Generator
+from components.llm import build_llm_client
 from components.orchestration.nodes import extract_filters_node
 from components.utils import _acall_hf_endpoint, getconfig
 from components.retriever.filters import FILTER_VALUES
@@ -129,11 +130,11 @@ def _append_history_row(history_path: str, row: Dict) -> None:
 async def evaluate_questions(
     cases: List[EvalCase],
     retriever,
-    generator=None,
+    filter_llm_client=None,
     filterable_fields: Dict[str, str] = None,
     filter_values: Dict[str, list] = None,
 ) -> List[Dict]:
-    """Run retrieval for each case. If generator is provided, extract filters first."""
+    """Run retrieval for each case. If filter_llm_client is provided, extract filters first."""
     eval_data = []
 
     for case in cases:
@@ -141,11 +142,11 @@ async def evaluate_questions(
 
         # --- Filter extraction (filters mode only) ---
         filters = None
-        if generator is not None:
+        if filter_llm_client is not None:
             state = {"query": case.question, "user_messages_history": case.user_messages_history}
             result_state = await extract_filters_node(
                 state,
-                generator=generator,
+                llm_client=filter_llm_client,
                 filterable_fields=filterable_fields,
                 filter_values=filter_values,
             )
@@ -180,7 +181,7 @@ async def evaluate_questions(
                 for d in final_docs
             ],
         }
-        if generator is not None:
+        if filter_llm_client is not None:
             entry["filters_applied"] = filters
             entry["filter_check"] = {
                 "expected": case.expected_filters,
@@ -277,19 +278,19 @@ async def run_retrieval_only(filters_enabled: bool):
         print(f"💥 Failed to load config/retriever: {e}")
         sys.exit(1)
 
-    generator = None
+    filter_llm_client = None
     if filters_enabled:
         if not FILTERABLE_FIELDS:
             print("💥 --filters passed but filterable_fields is empty in params.cfg. Aborting.")
             sys.exit(1)
-        print("🔍 Filter extraction enabled. Initializing Generator for filter extraction...")
-        generator = Generator()
+        print("🔍 Filter extraction enabled. Initializing filter-extraction LLM client...")
+        filter_llm_client = build_llm_client(_config, "filter_extraction")
 
     cases = build_eval_suite()
     results = await evaluate_questions(
         cases,
         retriever,
-        generator=generator,
+        filter_llm_client=filter_llm_client,
         filterable_fields=FILTERABLE_FIELDS if filters_enabled else None,
         filter_values=FILTER_VALUES if filters_enabled else None,
     )
@@ -525,12 +526,12 @@ async def run_ragas_eval(filters_enabled: bool):
     ragas_embeddings = _build_ragas_embeddings(retriever)
     generator = Generator()
 
-    filter_generator = None
+    filter_llm_client = None
     if filters_enabled:
         if not FILTERABLE_FIELDS:
             print("💥 --filters passed but filterable_fields is empty in params.cfg. Aborting.")
             sys.exit(1)
-        filter_generator = Generator()
+        filter_llm_client = build_llm_client(_config, "filter_extraction")
 
     cases = build_eval_suite()
     ragas_cases = [
@@ -551,11 +552,11 @@ async def run_ragas_eval(filters_enabled: bool):
         print(f"🧐 [{case.subset}] Processing: {case.question[:50]}...")
 
         filters = None
-        if filter_generator is not None:
+        if filter_llm_client is not None:
             state = {"query": case.question, "user_messages_history": case.user_messages_history}
             result_state = await extract_filters_node(
                 state,
-                generator=filter_generator,
+                llm_client=filter_llm_client,
                 filterable_fields=FILTERABLE_FIELDS,
                 filter_values=FILTER_VALUES,
             )
