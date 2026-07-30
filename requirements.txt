@@ -1,6 +1,7 @@
 gradio==5.50.0
 gradio_client==1.14.0
-qdrant_client==1.15.0
+qdrant_client==1.17.1
+fastembed==0.8.0
 langchain==0.3.26
 langchain-anthropic==0.3.17
 langchain-cohere==0.4.4

@@ -34,7 +34,7 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │  CONFIGURE — params.cfg only, zero code changes                      │
 │                                                                      │
 │  LLM provider · model · endpoints · Qdrant URL · collection         │
-│  initial_k · final_k · filterable_fields · MAX_TURNS · chunking     │
+│  top_k · reranker_top_k · filterable_fields · MAX_TURNS · chunking  │
 └──────────────────────────────────────────────────────────────────────┘
                                 ↓
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -292,7 +292,7 @@ Edit `_build_filters_footnote()` in `ui_adapters.py` to change the wording, emoj
 
 ### Change retrieval parameters at runtime
 
-`initial_k` and `final_k` can be overridden via env vars `RETRIEVAL_INITIAL_K` and `RETRIEVAL_FINAL_K` without editing `params.cfg`.
+`top_k` (retriever candidate count) and `reranker_top_k` (final reranked count) are set in the `[retrieval]` section of `params.cfg`. Unlike the deployment-identity settings, these tuning knobs have no env-var override - read from `params.cfg` only.
 
 ---
 

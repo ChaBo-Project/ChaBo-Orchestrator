@@ -69,9 +69,14 @@ async def retrieve_node(
 
         duration = (datetime.now() - start_time).total_seconds()
         retriever_config = {
-            "initial_k": retriever.initial_k,
-            "final_k": retriever.final_k,
+            "top_k": retriever.top_k,
+            "reranker_top_k": retriever.reranker_top_k,
             "qdrant_mode": retriever.qdrant_mode,
+            "reranker_enabled": retriever.reranker_enabled,
+            "hybrid_enabled": retriever.hybrid_enabled,
+            "dense_weight": retriever.dense_weight,
+            "sparse_weight": retriever.sparse_weight,
+            "rrf_k": retriever.rrf_k,
         }
 
         retriever_telemetry = extract_retriever_telemetry(raw_documents, retriever_config)

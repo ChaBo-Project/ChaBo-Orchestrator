@@ -68,6 +68,60 @@ async def check_qdrant(retriever):
         return False
 
 
+async def check_hybrid_collection(retriever):
+    """
+    Verify hybrid retrieval works. Returns True (skipped) when hybrid disabled.
+    """
+    if not getattr(retriever, "hybrid_enabled", False):
+        logger.info("Hybrid retrieval disabled - skipping hybrid collection check.")
+        return True
+
+    try:
+        from components.retriever.retriever_orchestrator import SPARSE_VECTOR_NAME
+
+        retriever.validate_hybrid_collection()
+        client = await retriever._aget_qdrant_client()
+
+        points, _ = await client.scroll(
+            collection_name=retriever.qdrant_collection,
+            limit=1, with_payload=True, with_vectors=False,
+        )
+        if not points:
+            logger.error(f"Hybrid: collection '{retriever.qdrant_collection}' is empty - nothing to probe.")
+            return False
+
+        payload = points[0].payload or {}
+        probe = payload.get("text") or payload.get("page_content") or ""
+        sparse_vector = retriever._embed_sparse(probe)
+        if sparse_vector is None:
+            logger.error("Hybrid: sparse encoder produced no terms from the sampled corpus text.")
+            return False
+
+        result = await client.query_points(
+            collection_name=retriever.qdrant_collection,
+            query=sparse_vector, using=SPARSE_VECTOR_NAME, limit=5,
+            with_payload=False, with_vectors=False,
+        )
+        if not result.points:
+            logger.error(
+                "Hybrid: sparse branch returned 0 hits for text sampled from the collection itself. "
+                "[retrieval] sparse_model / sparse_language almost certainly differ from the "
+                "--sparse_model / --sparse_language used at ingestion. Re-ingest, or fix params.cfg."
+            )
+            return False
+
+        logger.info(
+            f"Hybrid: collection '{retriever.qdrant_collection}' is hybrid-shaped "
+            f"(dense='{retriever.dense_vector_name or '<unnamed default>'}', "
+            f"sparse='{SPARSE_VECTOR_NAME}'); sparse branch returned {len(result.points)} hit(s)."
+        )
+        return True
+
+    except Exception as e:
+        logger.error(f"Hybrid collection check failed: {e}", exc_info=True)
+        return False
+
+
 async def test_retriever_unit(query, retriever_instance):
     """
     Unit test for the Retriever only.
@@ -85,7 +139,9 @@ async def test_retriever_unit(query, retriever_instance):
         logger.info(f"✅ Found {len(docs)} docs.")
 
         top_score = docs[0].metadata.get('rerank_score')
-        if top_score is not None:
+        if not getattr(retriever_instance, "reranker_enabled", True):
+            logger.info("Reranker disabled in config - documents are in retrieval order.")
+        elif top_score is not None:
             logger.info(f"🔝 Top Rerank Score: {top_score} (reranker active)")
         else:
             logger.warning("⚠️ No rerank_score in metadata — reranker may not have run")

@@ -9,7 +9,9 @@ from langchain_core.runnables import RunnableLambda
 import uvicorn
 from functools import partial
 
-from components.retriever.retriever_orchestrator import create_retriever_from_config
+from components.retriever.retriever_orchestrator import (
+    create_retriever_from_config, get_sparse_encoder, SPARSE_VECTOR_NAME,
+)
 from components.generator.generator_orchestrator import Generator
 from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
@@ -68,6 +70,24 @@ if REWRITER_ENABLED:
 # Initialize services
 logger.info("Initializing ChaBoHFEndpointRetriever and per-task LLM clients...")
 retriever_instance = create_retriever_from_config(config_file="params.cfg")
+
+# Hybrid retrieval
+if retriever_instance.hybrid_enabled:
+    retriever_instance.validate_hybrid_collection()  # raises ValueError with remediation text
+    get_sparse_encoder(retriever_instance.sparse_model, retriever_instance.sparse_language)
+    logger.info(
+        "Hybrid retrieval ENABLED - dense='%s' sparse='%s' weights=%.2f/%.2f rrf_k=%d model=%s/%s",
+        retriever_instance.dense_vector_name or "<unnamed default>",
+        SPARSE_VECTOR_NAME,
+        retriever_instance.dense_weight, retriever_instance.sparse_weight,
+        retriever_instance.rrf_k,
+        retriever_instance.sparse_model, retriever_instance.sparse_language,
+    )
+else:
+    logger.info("Hybrid retrieval disabled - dense-only retrieval.")
+
+if not retriever_instance.reranker_enabled:
+    logger.warning("Reranker DISABLED - returning top reranker_top_k candidates in retrieval order.")
 
 # Instance-specific system prompt guidelines (optional — empty/absent = none, framework
 # defaults + base prompt only). See FRAMEWORK_VALUES in components/generator/prompts.py

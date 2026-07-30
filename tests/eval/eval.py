@@ -605,8 +605,8 @@ async def run_ragas_eval(filters_enabled: bool):
         "judge_model": ragas_config.get("ragas", "JUDGE_MODEL").strip(),
         "num_cases": len(samples),
         **subset_counts,
-        "initial_k": _config.getint("retrieval", "initial_k", fallback=None),
-        "final_k": _config.getint("retrieval", "final_k", fallback=None),
+        "top_k": _config.getint("retrieval", "top_k", fallback=None),
+        "reranker_top_k": _config.getint("retrieval", "reranker_top_k", fallback=None),
         **avg_scores,
     }
     _append_history_row(history_path, history_row)
