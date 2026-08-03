@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from test_components import (
-    check_qdrant, check_embedding, check_reranker,
+    check_qdrant, check_hybrid_collection, check_embedding, check_reranker,
     test_retriever_unit, run_full_pipeline_test, test_metadata_filters
 )
 
@@ -60,6 +60,8 @@ async def main():
     # --- Connectivity checks (retriever instance carries all config/clients) ---
     logger.info("\n--- Step 1: Connectivity Checks ---")
     results["Qdrant"] = await check_qdrant(retriever)
+    # Returns True (skipped) when hybrid retrieval is off.
+    results["Hybrid Collection"] = await check_hybrid_collection(retriever)
     results["Embedding Endpoint"] = await check_embedding(retriever)
     results["Reranker Endpoint"] = await check_reranker(retriever)
 

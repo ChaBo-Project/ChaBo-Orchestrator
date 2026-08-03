@@ -4,7 +4,7 @@ Report generator for ChaBo eval results.
 Loads judged eval JSON(s), prints hit-rate summaries for both retriever and reranker
 (overall + per subset), and saves per-question CSV reports.
 
-NOTE: Requires initial_k == final_k in params.cfg so that stage2_reranked_results
+NOTE: Requires top_k == reranker_top_k in params.cfg so that stage2_reranked_results
 contains the full retriever candidate set. Retriever hit rates are computed by sorting
 stage2 results by retriever_score; reranker hit rates by rerank_score.
 
@@ -61,7 +61,7 @@ def calculate_hit_rates(df: pd.DataFrame, label: str = "", sort_by: str = "reran
     Calculate HR@5, HR@10, HR@20 for a DataFrame slice. Prints and returns results.
 
     sort_by: 'rerank_score' for reranker hit rates, 'retriever_score' for retriever hit rates.
-    Requires initial_k == final_k so that all retriever candidates appear in stage2 results.
+    Requires top_k == reranker_top_k so that all retriever candidates appear in stage2 results.
     """
     df = df.sort_values(["question", sort_by], ascending=[True, False])
     grouped = df.groupby("question")

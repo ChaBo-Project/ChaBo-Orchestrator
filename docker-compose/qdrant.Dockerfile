@@ -1,4 +1,5 @@
-FROM qdrant/qdrant:v1.15.3
+# 1.17+ is required for weighted RRF (Rrf(weights=[...])), used by hybrid retrieval.
+FROM qdrant/qdrant:v1.17.1
 
 # Create the data directory to ensure permissions are correct
 RUN mkdir -p /data/qdrant_data /data/qdrant_snapshots

@@ -54,8 +54,10 @@ url = https://your-qdrant-instance.cloud.qdrant.io:6333
 collection = your_collection
 
 [retrieval]
-initial_k = 20
-final_k = 5
+top_k = 20
+reranker_top_k = 5
+reranker_enabled = true    # false = skip the reranker, return top reranker_top_k in retrieval order
+hybrid_enabled = false     # dense + BM25 sparse, fused by Qdrant's weighted RRF (see below)
 
 [generator]
 PROVIDER = huggingface
@@ -311,6 +313,21 @@ docker exec -it docker-compose_chabo_1 python src/components/ingestor/upload_par
     --collection YOUR_COLLECTION_NAME \
     --vector_size 1024
 ```
+
+**For hybrid retrieval**, add `--hybrid`. This builds the collection with a *named* dense vector plus a BM25 sparse vector, and computes the sparse vectors from each chunk's `text`:
+
+```bash
+docker exec -it docker-compose_chabo_1 python src/components/ingestor/upload_parquet.py \
+    --file data/data.parquet \
+    --collection YOUR_COLLECTION_NAME \
+    --vector_size 1024 \
+    --hybrid \
+    --sparse_language english        # use 'arabic' for an Arabic corpus
+```
+
+> **`--sparse_model` and `--sparse_language` must match `[retrieval] sparse_model` and `sparse_language` in `params.cfg`.** 
+
+Hybrid needs a **fresh** collection — an existing dense-only collection stores one unnamed vector and cannot gain a sparse one in place, so re-ingest under a new `--collection` name. It also requires **Qdrant server 1.17 or newer** (weighted RRF) and `[qdrant] mode = native`; both are verified at startup.
 
 **Expected parquet schema** — the file must have two columns:
 
