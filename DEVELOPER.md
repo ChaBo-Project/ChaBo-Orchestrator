@@ -292,7 +292,7 @@ Edit `_build_filters_footnote()` in `ui_adapters.py` to change the wording, emoj
 
 ### Change retrieval parameters at runtime
 
-`top_k` (retriever candidate count) and `reranker_top_k` (final reranked count) are set in the `[retrieval]` section of `params.cfg`. Unlike the deployment-identity settings, these tuning knobs have no env-var override - read from `params.cfg` only.
+`top_k` (retriever candidate count) and `reranker_top_k` (final reranked count) are set in the `[retrieval]` section of `params.cfg`. Unlike the deployment-identity settings, these tuning knobs have no env-var override - read from `params.cfg` only. The same applies to the hybrid retrieval knobs (`hybrid_enabled`, `reranker_enabled`, `prefetch_top_k`, `dense_weight`, `sparse_weight`, `rrf_k`) - `params.cfg` only, no env-var override.
 
 ---
 

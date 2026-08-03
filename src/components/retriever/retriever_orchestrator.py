@@ -31,7 +31,10 @@ _SPARSE_ENCODER_LOCK = threading.Lock()
 
 def get_sparse_encoder(model_name: str, language: str):
     """
-    Return the process-wide fastembed sparse encoder, loading it on first use.
+    Return the process-wide fastembed sparse encoder.
+
+    Loaded eagerly at startup when `[retrieval] hybrid_enabled = true` (see `main.py`);
+    otherwise loaded lazily on first call.
     """
     key = (model_name, language)
     encoder = _SPARSE_ENCODERS.get(key)
@@ -686,7 +689,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             logger.error(f"CRITICAL: Embedding Failed. Details: {e}")
             return []
 
-        sparse_vector = self._embed_sparse(query) if self.hybrid_enabled else None
+        sparse_vector = await asyncio.to_thread(self._embed_sparse, query) if self.hybrid_enabled else None
 
         # B. Search Qdrant (Dynamic Async Call)
         candidate_results, applied_filter, narrowed = await self._asearch_qdrant(
