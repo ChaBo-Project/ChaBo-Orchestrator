@@ -26,8 +26,6 @@ Apache License 2.0 components:
   - huggingface_hub       Copyright Hugging Face and contributors
   - python-multipart      Copyright Andrew Dunham and contributors
   - pyarrow               Copyright Apache Software Foundation
-  - chat-ui               Copyright Hugging Face (redistributed via Docker
-                          image in docker-compose/)
 
 BSD-3-Clause components:
   - uvicorn, httpx, python-dotenv, PyPDF2
