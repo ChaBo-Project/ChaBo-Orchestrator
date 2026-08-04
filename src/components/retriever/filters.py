@@ -1,4 +1,4 @@
-# filters.py — define valid values for each filterable field declared in params.cfg.
+# filters.py — valid values for each filterable field declared in params.cfg.
 #
 # Rules:
 # - Keys must match field names in params.cfg [metadata_filters] filterable_fields exactly.
@@ -6,71 +6,11 @@
 #   ValueError at startup.
 # - Values must match what is stored in Qdrant payload metadata for that field.
 # - Extra keys here that are not in filterable_fields are silently ignored.
+#
+# Real values are instance-specific content — never committed to this repo. Supplied via
+# INSTANCE_CONFIG_DIR/instance.yaml's `filters:` key (see components.utils.load_instance_yaml);
+# falls back to {} (no filterable fields resolvable) when unset.
 
-FILTER_VALUES: dict[str, list] = {'crop_type': ['arugula',
-  'basil',
-  'benut',
-  'cabbage',
-  'canola',
-  'chamomile',
-  'cotton',
-  'eggplant',
-  'fava beans',
-  'flax',
-  'flux',
-  'garlic',
-  'general',
-  'green beans',
-  'lettuce',
-  'maize',
-  'marjoram',
-  'molokhia',
-  'onion',
-  'pepper',
-  'rice',
-  'sesame',
-  'sorghum',
-  'soya bean',
-  'strawberry',
-  'sugar beet',
-  'sugarcane',
-  'sunflower',
-  'tomato',
-  'wheat'],
- 'title': ['Cultivation and producing Maize',
-  'Cultivation and producing Cotton',
-  'Cultivation and producing Fava beans',
-  'Cultivation and producing Green Beans',
-  'Cultivation and producing Onion',
-  'Cultivation and producing Sugar Beet',
-  'Cultivation and producing Tomato',
-  'cultivation practices on monthly basis for Fava Beans',
-  'cultivation practices on monthly basis for Green Beans',
-  'cultivation practices on monthly basis for Onion',
-  'cultivation practices on monthly basis for Sugar Beet',
-  'Cultivation and producing Basil',
-  'Cultivation and producing Benut',
-  'Cultivation and producing Cabbage',
-  'Cultivation and producing Canola',
-  'Cultivation and producing Chamomile',
-  'Cultivation and producing Soyabean',
-  'Cultivation and producing Eggplant',
-  'Cultivation and producing Flux',
-  'Detailed cultivation information for Garlic',
-  'Detailed cultivation information for Onion',
-  'Cultivation and producing molokhia, lettuce, arugula',
-  'Maize cultivation in the old and new lands',
-  'Cultivation and producing Marjoram',
-  'Cultivation and producing Pepper',
-  'MALR Official recommendation for pest manegement',
-  'Detailed cultivation information for Rice',
-  'Cultivation and producing Sesame',
-  'Cultivation and producing Sorghum',
-  'Cultivation and producing Soya bean',
-  'Cultivation and producing Strawberry',
-  'Cultivation and producing Sugar beet',
-  'Cultivation and producing Sugarcane',
-  'Cultivation and producing Sunflower',
-  'Detailed cultivation information for Wheat',
-  'Cultivation and producing Wheat in New reclaimed lands',
-  'Cultivation and producing Wheat  in old lands']}
+from components.utils import load_instance_yaml
+
+FILTER_VALUES: dict[str, list] = load_instance_yaml().get("filters", {})

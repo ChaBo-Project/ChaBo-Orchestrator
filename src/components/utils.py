@@ -1,25 +1,123 @@
 import os
+import re
 import configparser
 import logging
 logger = logging.getLogger(__name__)
 import requests # Need this for _call_hf_endpoint, but we will define the function here
 import httpx
 import json
-from typing import Dict, Any, List
+import yaml
+from typing import Dict, Any, List, Optional
 from langchain_core.documents import Document
 
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file if present
 
-def getconfig(configfile_path: str) -> configparser.ConfigParser:
-    """Reads the config file."""
-    config = configparser.ConfigParser()
+INSTANCE_CONFIG_DIR_ENV = "INSTANCE_CONFIG_DIR"
+
+
+def instance_config_dir() -> Optional[str]:
+    """
+    Resolve INSTANCE_CONFIG_DIR. Returns None if unset.
+
+    Raises ValueError if set but not a real directory — that's a misconfiguration
+    (typo'd path, unmounted volume), not "no instance config", and should fail loudly
+    rather than silently running with generic defaults.
+    """
+    path = os.getenv(INSTANCE_CONFIG_DIR_ENV)
+    if not path:
+        return None
+    if not os.path.isdir(path):
+        raise ValueError(
+            f"{INSTANCE_CONFIG_DIR_ENV}={path!r} is set but is not a directory. "
+            "Unset it to run with generic defaults, or point it at a real instance config directory."
+        )
+    return path
+
+
+def params_override_path() -> Optional[str]:
+    """Path to params.override.cfg if INSTANCE_CONFIG_DIR is set and the file exists, else None."""
+    base = instance_config_dir()
+    if not base:
+        return None
+    path = os.path.join(base, "params.override.cfg")
+    return path if os.path.isfile(path) else None
+
+
+def load_instance_yaml() -> Dict:
+    """
+    Load instance.yaml (Tier-2 content: filters, db_context, blocklist,
+    instance_guidelines) if present. Returns {} if INSTANCE_CONFIG_DIR is unset or
+    instance.yaml is absent. Each consumer reads its own top-level key and supplies
+    its own empty/generic fallback.
+
+    Raises ValueError on malformed YAML (fail fast, same posture as
+    rewriter.db_context.load_db_context).
+    """
+    base = instance_config_dir()
+    if not base:
+        return {}
+    path = os.path.join(base, "instance.yaml")
+    if not os.path.isfile(path):
+        return {}
     try:
-        config.read_file(open(configfile_path))
-        return config
-    except FileNotFoundError:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Failed to parse instance.yaml at {path}: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"instance.yaml at {path} must be a mapping at the top level, got {type(data).__name__}"
+        )
+    return data
+
+
+_PROMPT_OVERRIDE_SECTION_RE = re.compile(r"^##\s+(\S+)\s*$", re.MULTILINE)
+
+
+def load_prompt_overrides() -> Dict[str, str]:
+    """
+    Parse prompt_overrides.md's `## section_name` headers into {section_name: text}.
+    Returns {} if INSTANCE_CONFIG_DIR is unset or prompt_overrides.md is absent.
+
+    Tier-1, "change at your own risk" — overrides the steps/rules portion of a
+    prompt only; callers must keep the output schema/contract core-owned and never
+    substitute it from here.
+    """
+    base = instance_config_dir()
+    if not base:
+        return {}
+    path = os.path.join(base, "prompt_overrides.md")
+    if not os.path.isfile(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    sections: Dict[str, str] = {}
+    matches = list(_PROMPT_OVERRIDE_SECTION_RE.finditer(text))
+    for i, m in enumerate(matches):
+        name = m.group(1).strip()
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections[name] = text[start:end].strip()
+    return sections
+
+
+def getconfig(configfile_path: str) -> configparser.ConfigParser:
+    """
+    Reads the config file, layering an optional Tier-1 instance override
+    (INSTANCE_CONFIG_DIR/params.override.cfg) on top if present — later file wins
+    per [section][key]. Every caller of getconfig() gets this for free.
+    """
+    config = configparser.ConfigParser()
+    paths = [configfile_path]
+    override = params_override_path()
+    if override:
+        paths.append(override)
+    read_ok = config.read(paths)
+    if configfile_path not in read_ok:
         logger.error(f"Warning: Config file not found at {configfile_path}. Relying on environment variables.")
-        return configparser.ConfigParser()
+    return config
 
 
 def get_auth_for_generator(provider: str) -> dict:

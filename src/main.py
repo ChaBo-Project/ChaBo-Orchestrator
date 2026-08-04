@@ -17,12 +17,11 @@ from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
 from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
-from components.utils import getconfig
+from components.utils import getconfig, load_instance_yaml, instance_config_dir
 from components.retriever.filters import FILTER_VALUES
-from components.rewriter.db_context import load_db_context, DBContext
-from components.generator.prompts import load_instance_guidelines
+from components.rewriter.db_context import DBContext
 from components.guardrails.input_guard import InputGuardClient
-from components.guardrails.output_guard import load_compiled_blocklist
+from components.guardrails.output_guard import load_blocklist, compile_blocklist
 from components.guardrails.output_classification import OutputClassificationConfig, build_output_classification_messages
 from components.guardrails.llm_guard import build_guard_backend, DEFAULT_CLASSIFIER_MODEL
 from typing import Dict
@@ -55,17 +54,23 @@ if FILTERABLE_FIELDS:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+_instance_dir = instance_config_dir()
+logger.info(
+    f"Instance config: {_instance_dir}" if _instance_dir
+    else "Instance config: none (INSTANCE_CONFIG_DIR unset — running with generic defaults)"
+)
+
 # Query rewriter config (optional — defaults to disabled if section is absent)
 REWRITER_ENABLED = config.getboolean("query_rewriter", "enabled", fallback=False)
-DB_CONTEXT_PATH = config.get("query_rewriter", "db_context_path", fallback="db_context.yaml")
 
 db_context: DBContext = DBContext() # instantiating a typed object here for potential future use (e.g. with metadata filter node)
 if REWRITER_ENABLED:
-    db_context = load_db_context(DB_CONTEXT_PATH)
+    db_context = DBContext(**load_instance_yaml().get("db_context", {}))
     if not db_context.abstract.strip():
         logger.warning(
-            f"Query rewriter: db_context.abstract is empty - running in conservative mode \
-             (no glossary-based expansion). Populate {DB_CONTEXT_PATH} to ground the rewriter.")
+            "Query rewriter: db_context.abstract is empty - running in conservative mode "
+            "(no glossary-based expansion). Populate INSTANCE_CONFIG_DIR/instance.yaml's "
+            "db_context key to ground the rewriter.")
 
 # Initialize services
 logger.info("Initializing ChaBoHFEndpointRetriever and per-task LLM clients...")
@@ -92,8 +97,7 @@ if not retriever_instance.reranker_enabled:
 # Instance-specific system prompt guidelines (optional — empty/absent = none, framework
 # defaults + base prompt only). See FRAMEWORK_VALUES in components/generator/prompts.py
 # for the non-negotiable, code-only defaults this can never override.
-INSTANCE_GUIDELINES_PATH = config.get("generator", "instance_guidelines_path", fallback="").strip()
-INSTANCE_GUIDELINES = load_instance_guidelines(INSTANCE_GUIDELINES_PATH)
+INSTANCE_GUIDELINES = load_instance_yaml().get("instance_guidelines", "")
 
 # Get module-specific LLM configs
 generation_client = build_llm_client(config, "generation")
@@ -173,6 +177,9 @@ if OUTPUT_CLASSIFICATION_ENABLED:
     logger.info(f"Output classifier enabled (mode={OUTPUT_CLASSIFICATION_MODE}, window_chars={output_classification_config.window_chars})")
 
 # --- Keyword blocklist ---
+# Base list ships in the image (generic, open-source-sourced — see blocklist.txt's own
+# header). INSTANCE_CONFIG_DIR/instance.yaml's `blocklist` key adds instance-specific
+# terms on top, per language — additions only, no removal.
 BLOCKLIST_ENABLED = config.getboolean("output_guard", "blocklist_enabled", fallback=False)
 BLOCKLIST_MESSAGE = config.get("output_guard", "blocklist_message", fallback="[response withheld]")
 blocklist = None
@@ -180,8 +187,15 @@ if BLOCKLIST_ENABLED:
     blocklist_path = config.get(
         "output_guard", "blocklist_path", fallback="src/components/guardrails/blocklist.txt"
     )
-    blocklist = load_compiled_blocklist(blocklist_path)
-    logger.info("Output blocklist enabled")
+    terms_by_lang = load_blocklist(blocklist_path)
+    instance_blocklist = load_instance_yaml().get("blocklist", {})
+    for lang, terms in instance_blocklist.items():
+        terms_by_lang[lang] = terms_by_lang.get(lang, []) + list(terms)
+    blocklist = compile_blocklist(terms_by_lang)
+    logger.info(
+        f"Output blocklist enabled ({len(terms_by_lang)} languages"
+        f"{', with instance additions' if instance_blocklist else ''})"
+    )
 
 # Build the LangGraph workflow
 compiled_graph = build_workflow(

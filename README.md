@@ -25,7 +25,7 @@ A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, Lang
 
 > **Smart Search** applies LLM-extracted metadata filters to narrow Qdrant results before reranking. Filters are pulled from the current query, with conversation history as fallback. When filters are applied, ChatUI displays a footnote at the end of each response (e.g. *🔍 Searched within: category: news · lang: en*) — including a note if the AND-safeguard fired and narrowed the filter to the priority field. Activated only when `filterable_fields` is configured under `[metadata_filters]` in `params.cfg` — omit or leave empty for standard unfiltered search.
 
-> **Query rewriting** normalises the query (term/acronym expansion, pronoun resolution, query completion) and can translate it into the corpus language before retrieval. Grounded by `db_context.yaml`. Configured under `[query_rewriter]`.
+> **Query rewriting** normalises the query (term/acronym expansion, pronoun resolution, query completion) and can translate it into the corpus language before retrieval. Grounded by `instance.yaml`'s `db_context` key (see Instance Configuration below). Configured under `[query_rewriter]`.
 
 > **Guardrails** are two independent, opt-in defenses. The **input guard** classifies the query for prompt-injection/jailbreak and harmful content before retrieval (runs in parallel with rewrite/filter, ≈zero added latency); an unsafe verdict short-circuits to a fixed message. The **output guard** screens the streamed answer against a multilingual blocklist and replaces it with a notice on a hit. Configured under `[input_guard]` / `[output_guard]`.
 
@@ -79,14 +79,13 @@ MAX_CHARS = 8000
 
 Enabling `filterable_fields` requires two additional steps beyond `params.cfg`:
 
-**1. Update `src/components/retriever/filters.py`** with valid values for each declared field:
+**1. Set `filters` in `INSTANCE_CONFIG_DIR/instance.yaml`** with valid values for each declared field (see Instance Configuration below):
 
-```python
-FILTER_VALUES = {
-    "project_id": ["proj-001", "proj-002", "proj-003"],
-    "year": [2022, 2023, 2024],
-    "tags": ["report", "policy", "technical"],
-}
+```yaml
+filters:
+  project_id: ["proj-001", "proj-002", "proj-003"]
+  year: [2022, 2023, 2024]
+  tags: ["report", "policy", "technical"]
 ```
 
 Every field listed in `filterable_fields` must have an entry here — ChaBo validates this at startup and will refuse to start if any field is missing. Values must exactly match what is stored in your Qdrant collection (the LLM will snap user queries to the closest match from this list).
@@ -106,7 +105,7 @@ Every field listed in `filterable_fields` must have an entry here — ChaBo vali
 
 Fields stored as top-level keys or as JSON strings will not be found by the filter. If you use `upload_parquet.py` for ingestion (see Data Upload below), this schema is handled automatically.
 
-> Omit or leave `filterable_fields` empty to run standard unfiltered search — no `filters.py` changes needed.
+> Omit or leave `filterable_fields` empty to run standard unfiltered search — no `instance.yaml` changes needed.
 
 #### Query Rewriting & Guardrails Setup (optional)
 
@@ -121,11 +120,10 @@ Three optional pipeline stages, all configured in `params.cfg` and **off by defa
 ```ini
 [query_rewriter]
 enabled = true
-db_context_path = db_context.yaml   # grounding: corpus abstract + glossary (repo root)
 target_language =                   # ISO code (e.g. "ar") for cross-lingual rewriting; empty to disable
 ```
 
-`db_context.yaml` grounds the rewriter in your domain. With an empty abstract/glossary it runs in conservative mode (pronoun/filler/language normalisation only) and logs a startup warning.
+Grounding (corpus abstract + glossary) comes from `INSTANCE_CONFIG_DIR/instance.yaml`'s `db_context` key — see Instance Configuration below. With an empty/absent abstract and glossary it runs in conservative mode (pronoun/filler/language normalisation only) and logs a startup warning.
 
 **Input guard** — classifies the query before retrieval; an unsafe verdict short-circuits to `blocked_message`:
 
@@ -177,12 +175,7 @@ The generator's system prompt is composed from three layers, in this order:
 
 1. **`FRAMEWORK_VALUES`** — the framework owner's non-negotiable content rules (currently: don't dispute scientific consensus, stay politically/religiously neutral, avoid divisive stances). This is a **code-only constant** in `src/components/generator/prompts.py` — it is never read from `params.cfg` or any instance file, and changing it requires a deliberate source edit, not a config flip.
 2. **`BASE_PROMPT`** — the generic RAG instructions (citation format, context-only answers, formatting) — the same for every deployment.
-3. **Instance guidelines** *(optional, off by default)* — your own deployment-specific guidance (tone, domain scope, formatting preferences), loaded from a plain text file:
-
-```ini
-[generator]
-instance_guidelines_path = instance_guidelines.txt   # empty/absent = none
-```
+3. **Instance guidelines** *(optional, off by default)* — your own deployment-specific guidance (tone, domain scope, formatting preferences), loaded from `INSTANCE_CONFIG_DIR/instance.yaml`'s `instance_guidelines` key (see Instance Configuration below) — empty/absent = none.
 
 If an instance guideline ever conflicts with a Framework Value, the composed prompt tells the model the Framework Value takes precedence.
 
@@ -213,6 +206,44 @@ docker build -t chabo .
 docker run -p 7860:7860 \
   -e HF_TOKEN=your_token \
   -e QDRANT_API_KEY=your_key \
+  chabo
+```
+
+## Instance Configuration
+
+The image this repo publishes is generic and instance-blind — it ships no corpus content,
+filter values, or per-deployment prompt text. Everything specific to one deployment is
+supplied at runtime via the `INSTANCE_CONFIG_DIR` environment variable, pointing at a
+directory with up to three files. All three are optional; if `INSTANCE_CONFIG_DIR` is unset,
+or a given file is absent, that piece falls back to a safe generic default (empty filters, no
+extra blocklist terms, no instance guidelines, default prompt wording) — no behavior change
+from today.
+
+| File | Tier | Format | Contains |
+|---|---|---|---|
+| `params.override.cfg` | 1 — pipeline knobs | INI, same `[section]key=value` shape as `params.cfg` | Retrieval tuning, endpoints, provider/model selection, guardrail toggles. Layered on top of `params.cfg`; later value wins per key. |
+| `prompt_overrides.md` | 1 — prompt engineering | Markdown, `## section_name` headers | `query_rewrite_steps`, `filter_extraction_steps` — overrides the *decision-making* portion of those two prompts only. The output JSON schema/contract is always core-owned and never overridden, so a bad override can degrade quality but can't break parsing. |
+| `instance.yaml` | 2 — safe content | YAML, four independent top-level keys | `filters` (valid values for `[metadata_filters] filterable_fields`), `db_context` (`abstract`/`glossary` for the query rewriter), `blocklist` (`{lang: [terms]}`, additions on top of the shipped list — never removes from it), `instance_guidelines` (plain text appended to the system prompt, subordinate to the framework's non-negotiable content rules). |
+
+**Tier 1 is "change at your own risk."** These values affect pipeline behavior directly — a
+bad edit can degrade retrieval or generation quality, not just wording. Tier 2 is safe for a
+non-engineer to edit: worst case is a less helpful answer, never a broken pipeline.
+
+Example layout:
+
+```
+instance_config/
+├── params.override.cfg
+├── prompt_overrides.md
+└── instance.yaml
+```
+
+```bash
+docker run -p 7860:7860 \
+  -e HF_TOKEN=your_token \
+  -e QDRANT_API_KEY=your_key \
+  -e INSTANCE_CONFIG_DIR=/app/instance_config \
+  -v $(pwd)/instance_config:/app/instance_config \
   chabo
 ```
 
