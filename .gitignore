@@ -4,8 +4,6 @@
 *:Zone.Identifier
 __pycache__/
 NOTES.md
-docker-compose/chatui.env.local
-docker-compose/.env
 !.env.example
 .chabo_env/
 chabo_env/

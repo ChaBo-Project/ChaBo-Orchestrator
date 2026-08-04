@@ -33,9 +33,7 @@ A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, Lang
 
 ## Deployment
 
-### Option 1: Backend Only (HuggingFace Spaces / Standalone)
-
-Deploy ChaBo as a standalone API using the root `Dockerfile`. This is the setup used on HuggingFace Spaces, where a frontend (e.g. ChatUI) runs separately.
+Deploy ChaBo as a standalone API using the root `Dockerfile`. This is the setup used on HuggingFace Spaces, where a frontend (e.g. ChatUI) runs separately. Full-stack deployment (ChatUI, local TEI, local Qdrant via Docker Compose) lives in a separate stack outside this repo.
 
 **Prerequisites:** Remote HuggingFace Inference Endpoints for embedding and reranking, an existing Qdrant instance, and API keys.
 
@@ -218,97 +216,12 @@ docker run -p 7860:7860 \
   chabo
 ```
 
----
+## Data Upload
 
-### Option 2: Full Stack with Docker Compose
-
-Run ChaBo with a [ChatUI](https://github.com/huggingface/chat-ui) frontend as a single stack. Docker Compose profiles optionally add local embedding/reranking (TEI) and a local Qdrant instance — so you can go fully self-contained with no external dependencies beyond an LLM provider.
-
-#### Configuration
-
-Configuration is split across three files:
-
-- **`params.cfg`** (repo root) — Qdrant connection, retrieval parameters, generator/LLM settings, and ingestor chunking config. This is the same file used in Option 1, but when using local TEI or local Qdrant, the endpoint URLs in `.env` override what's in `params.cfg`.
-- **`docker-compose/.env`** — API keys, Compose profiles, and endpoint overrides for local TEI containers.
-- **`docker-compose/chatui.env.local`** — ChatUI frontend settings (app name, model endpoints, UI options).
-
-Set up the Docker Compose files:
-
-**1. Environment file** — controls backend services and Compose profiles:
+To populate a Qdrant collection with your embedding data, place your data file at `data/data.parquet` and run (inside the activated `chabo_env` virtual environment, or via `docker exec` into a running `chabo` container):
 
 ```bash
-cp docker-compose/.env.example docker-compose/.env
-```
-
-Edit `docker-compose/.env`:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `HF_TOKEN` | Yes | HuggingFace API token |
-| `QDRANT_API_KEY` | Yes | Qdrant API key |
-| `COMPOSE_PROFILES` | No | Comma-separated profiles to enable (see table below) |
-| `TEI_EMBEDDING_MODEL` | If using local TEI | Model ID (default: `BAAI/bge-base-en-v1.5`) |
-| `TEI_RERANKER_MODEL` | If using local TEI | Model ID (default: `BAAI/bge-reranker-base`) |
-| `QWEN3GUARD_MODEL` | If using `guard` profile | Input-guard classifier model (default: `Qwen/Qwen3Guard-Gen-0.6B`) |
-
-Embedding and reranker endpoint URLs are configured in `params.cfg` under `[hf_endpoints]`. When using local TEI, set them to `http://tei-embedding:80` and `http://tei-reranker:80`.
-
-**2. ChatUI config** — controls the frontend app name, model endpoints, and UI settings:
-
-```bash
-cp docker-compose/chatui.env.local.template docker-compose/chatui.env.local
-# Edit chatui.env.local to customize (endpoint URLs are pre-configured for the Docker network)
-```
-
-#### Compose Profiles
-
-Profiles add optional services on top of the base stack (ChaBo + ChatUI):
-
-| Profile | Services added | Use case |
-|---------|---------------|----------|
-| `local` | `tei-embedding` (port 8081), `tei-reranker` (port 8082) | Self-hosted embedding and reranking instead of remote HF endpoints |
-| `infra` | `qdrant` (port 6333) | Local Qdrant instance instead of a remote one |
-| `guard` | `qwen3guard` (port 8000) | Local Qwen3Guard-Gen classifier for the input guard — only when `[input_guard] mode = classifier` |
-
-Set profiles in `.env` (e.g. `COMPOSE_PROFILES=local,infra`) or via the CLI.
-
-> **Important:** When using local TEI, the embedding model (`TEI_EMBEDDING_MODEL`) must match the model used to create your Qdrant collection. Mismatched models will produce poor search results.
-
-> **Classifier-mode input guard:** the `guard` profile serves Qwen3Guard-Gen via vLLM (GPU image by default). On CPU-only hosts, swap in a vLLM-CPU build or a llama.cpp GGUF server (e.g. `QuantFactory/Qwen3Guard-Gen-0.6B-GGUF`), and set `[input_guard] endpoint_url = http://qwen3guard:8000`. `mode = llm` needs no extra container.
-
-#### Build and Run
-
-```bash
-# Start base stack (ChaBo + ChatUI, using remote HF endpoints and remote Qdrant)
-docker-compose -f docker-compose/docker-compose.yml up --build
-
-# Start with local TEI embedding/reranking
-COMPOSE_PROFILES=local docker-compose -f docker-compose/docker-compose.yml up --build
-
-# Start fully self-contained (local TEI + local Qdrant)
-COMPOSE_PROFILES=local,infra docker-compose -f docker-compose/docker-compose.yml up --build
-# or docker-compose -f docker-compose/docker-compose.yml --profile infra --profile local up -d --build
-
-# Run in detached mode
-docker-compose -f docker-compose/docker-compose.yml up -d --build
-
-# View logs
-docker-compose -f docker-compose/docker-compose.yml logs -f
-
-# Stop services
-docker-compose -f docker-compose/docker-compose.yml down
-```
-
-**First run with local TEI:** The TEI containers download models on first startup (1-3 minutes depending on model size). Models are cached in Docker volumes, so subsequent starts are fast.
-
-**GPU support:** The default TEI images are CPU-only. For GPU acceleration, edit `docker-compose/docker-compose.yml` and swap in the GPU image variant (see comments in the file).
-
-#### Data Upload
-
-To populate a Qdrant collection with your embedding data, place your data file at `data/data.parquet` and run:
-
-```bash
-docker exec -it docker-compose_chabo_1 python src/components/ingestor/upload_parquet.py \
+python src/components/ingestor/upload_parquet.py \
     --file data/data.parquet \
     --collection YOUR_COLLECTION_NAME \
     --vector_size 1024
@@ -317,7 +230,7 @@ docker exec -it docker-compose_chabo_1 python src/components/ingestor/upload_par
 **For hybrid retrieval**, add `--hybrid`. This builds the collection with a *named* dense vector plus a BM25 sparse vector, and computes the sparse vectors from each chunk's `text`:
 
 ```bash
-docker exec -it docker-compose_chabo_1 python src/components/ingestor/upload_parquet.py \
+python src/components/ingestor/upload_parquet.py \
     --file data/data.parquet \
     --collection YOUR_COLLECTION_NAME \
     --vector_size 1024 \
@@ -347,23 +260,6 @@ payload → { "text": "...", "metadata": { "field": "value", ... } }
 The `metadata` dict inside `payload` is where filterable fields live (see Metadata Filters Setup above). The upload script handles collection creation automatically if it does not already exist.
 
 > **Note:** Use the same collection name as in your `params.cfg` and the correct vector dimension for your embedding model (e.g. 1024 for BGE-large, 768 for BGE-base). The `vector_size` must match when the collection is first created — it cannot be changed afterwards.
-
-#### Service URLs
-
-| Service | URL | Description |
-|---------|-----|-------------|
-| ChatUI | http://localhost:3000 | Chat frontend |
-| ChaBo API | http://localhost:7860 | Backend API |
-| API Docs | http://localhost:7860/docs | Interactive documentation |
-
-## Non-HTTPS Deployments
-
-When deploying to a server without HTTPS (e.g. a VPS accessed via IP address), ChatUI needs two settings to avoid 403 errors:
-
-1. Set `ORIGIN` on the `chatui` service in `docker-compose/docker-compose.yml` to your server's URL (e.g. `http://your-server-ip:3000`) — uncomment the `environment:` block on that service. This tells SvelteKit the expected origin for CSRF protection.
-2. Uncomment `ALLOW_INSECURE_COOKIES=true` in `docker-compose/chatui.env.local`. This allows session cookies over plain HTTP.
-
-Not needed behind HTTPS (e.g. HuggingFace Spaces, or behind a reverse proxy with TLS).
 
 ## API Endpoints
 
