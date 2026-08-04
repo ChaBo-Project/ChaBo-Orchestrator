@@ -1,6 +1,5 @@
 import os
 import json
-import configparser
 import logging
 import asyncio
 import threading

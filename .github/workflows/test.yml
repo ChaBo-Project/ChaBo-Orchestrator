@@ -1,0 +1,44 @@
+# Runs on every PR and on pushes to main
+# Lints the code, compiles it, runs the tests, and checks the Docker image still builds.
+
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    name: Lint, compile, and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Lint the code
+        run: python -m ruff check .
+      - name: Compile every file under src (catches syntax errors)
+        run: python -m compileall src
+      - name: Run the tests
+        run: python -m pytest
+
+  docker-build:
+    name: Build the Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image without pushing it
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -4,9 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 import requests # Need this for _call_hf_endpoint, but we will define the function here
 import httpx
-import json
 from typing import Dict, Any, List
-from langchain_core.documents import Document
 
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file if present
