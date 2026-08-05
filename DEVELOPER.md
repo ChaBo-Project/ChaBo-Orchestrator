@@ -100,7 +100,7 @@ Not all files are equal. The codebase has four distinct layers — understanding
 
 ```
 src/
-├── main.py                                     # FastAPI app, LangServe route registration, startup validation of filters.py vs params.cfg
+├── main.py                                     # FastAPI app, LangServe route registration, startup validation of filterable_fields vs instance.yaml
 └── components/
     ├── utils.py                                # Shared: getconfig, get_config_value, build_conversation_context, HTTP helpers (_call_hf_endpoint, _acall_hf_endpoint)
     ├── orchestration/
@@ -112,7 +112,7 @@ src/
     │   └── telemetry.py                        # Extracts retriever telemetry from Document metadata for logging — INFRASTRUCTURE
     ├── retriever/
     │   ├── retriever_orchestrator.py           # ChaBoHFEndpointRetriever: Embed → Qdrant Search → Rerank — INFRASTRUCTURE
-    │   └── filters.py                          # FILTER_VALUES dict — valid values per filterable field — MUST CUSTOMIZE
+    │   └── filters.py                          # FILTER_VALUES, loaded from INSTANCE_CONFIG_DIR/instance.yaml — INFRASTRUCTURE (real values live in instance.yaml, not here)
     ├── generator/
     │   ├── generator_orchestrator.py           # LLM provider wiring, config resolution, generate() / generate_streaming() — INFRASTRUCTURE
     │   ├── prompts.py                          # All LLM prompt content — MUST / OPTIONAL CUSTOMIZE
@@ -247,20 +247,33 @@ Both modes implement the same AND-safeguard retry logic. Clients are initialised
 
 ---
 
-## filters.py Contract
+## Filter Values Contract
 
-`src/components/retriever/filters.py` defines the allowed values for each filterable field.
+Allowed values for each filterable field are **instance content, not source** — they live in
+`INSTANCE_CONFIG_DIR/instance.yaml`'s `filters` key, not in `src/components/retriever/filters.py`.
+`filters.py` itself just does `FILTER_VALUES = load_instance_yaml().get("filters", {})` and exposes
+`validate_filterable_fields()`; it ships with no real values, by design (the published image is
+instance-blind — see README's "Instance Configuration").
 
 - **Keys must exactly match** field names declared in `[metadata_filters] filterable_fields` in `params.cfg`
-- **Every declared field must have an entry** — `main.py` validates this at startup and raises `ValueError` if any field is missing
+- **Every declared field must have an entry** — `main.py` calls `filters.validate_filterable_fields()` at
+  startup and it raises `ValueError` if any field is missing
 - **Values must match what is stored in Qdrant** — the LLM uses this list to snap user queries to the closest valid value
-- Extra keys in `filters.py` not in `filterable_fields` are silently ignored
+- Extra keys in `instance.yaml`'s `filters` not in `filterable_fields` are silently ignored
 
 **To add a new filterable field:**
 
 1. Add it to `params.cfg`: `filterable_fields = existing_field:str,new_field:str`
-2. Add it to `filters.py`: `FILTER_VALUES["new_field"] = ["value_a", "value_b"]`
+2. Add it to `INSTANCE_CONFIG_DIR/instance.yaml`:
+   ```yaml
+   filters:
+     new_field: ["value_a", "value_b"]
+   ```
 3. Ensure your Qdrant payloads store the field under `metadata.new_field`
+
+If you're running without `INSTANCE_CONFIG_DIR` set (e.g. local dev against a test corpus),
+`FILTER_VALUES` resolves to `{}` and startup will fail as soon as `filterable_fields` is non-empty —
+that's the intended signal to go configure `instance.yaml`, not a bug.
 
 ---
 
