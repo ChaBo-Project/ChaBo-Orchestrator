@@ -1,0 +1,48 @@
+# On every push to main, Release Please keeps a release PR up to date 
+# (increment version # + CHANGELOG built from the commit messages).
+# When the release PR is merged, it does the following:
+# - Creates the git tag + GitHub release
+# - Builds and pushes the Docker image to GHCR
+
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-image:
+    needs: release-please
+    # Only runs when a release was just created (the release PR was merged).
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to the GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the image and push it with the new version tag
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/chabo-project/chabo-rag-orchestrator:${{ needs.release-please.outputs.version }}

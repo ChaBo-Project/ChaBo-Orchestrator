@@ -1,5 +1,4 @@
 # Helper function to extract configuration and score data from documents
-import json
 from typing import Dict, Any, List
 from langchain_core.documents import Document
 

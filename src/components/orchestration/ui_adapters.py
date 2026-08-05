@@ -3,9 +3,8 @@ ChatUI Adapters for LangGraph Workflow Streaming
 """
 import logging
 import asyncio
-import json
 import os
-from typing import AsyncGenerator, Dict, Any, Optional
+from typing import Dict, Any, Optional
 
 from components.utils import build_conversation_context
 from components.guardrails.output_guard import StreamingBlocklistFilter
@@ -212,11 +211,9 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
         if isinstance(data, dict):
             text_value = data.get('text', '')
             messages_value = data.get('messages', None)
-            preprompt_value = data.get('preprompt', None)
         else:
             text_value = getattr(data, 'text', '')
             messages_value = getattr(data, 'messages', None)
-            preprompt_value = getattr(data, 'preprompt', None)
 
         # Convert dict messages to objects if needed
         messages = []
@@ -269,7 +266,7 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
 
     except Exception as e:
         logger.error(f"ChatUI error: {str(e)}")
-        logger.error(f"Full traceback:", exc_info=True)
+        logger.error("Full traceback:", exc_info=True)
         yield f"Error: {str(e)}"
 
 
@@ -283,12 +280,10 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
             text_value = data.get('text', '')
             messages_value = data.get('messages', None)
             files_value = data.get('files', None)
-            preprompt_value = data.get('preprompt', None)
         else:
             text_value = getattr(data, 'text', '')
             messages_value = getattr(data, 'messages', None)
             files_value = getattr(data, 'files', None)
-            preprompt_value = getattr(data, 'preprompt', None)
 
         # Extract query - prefer structured messages
         conversation_context = None
