@@ -1,9 +1,8 @@
 import json
 import logging
-import os
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from components.utils import getconfig, load_prompt_overrides
+from components.utils import getconfig, load_prompt_overrides, load_instance_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -96,21 +95,14 @@ FOLLOW-UP QUESTIONS (OPTIONAL):
 """
 
 
-# Unused since config-consolidation: instance_guidelines now loads via
-# components.utils.load_instance_yaml() in main.py. Kept as tech debt, not removed yet.
-def load_instance_guidelines(path: str) -> str:
+def load_instance_guidelines() -> str:
     """
     Load optional per-deployment instance guidelines (plain text, appended to the base
-    system prompt via build_system_prompt). Off by default: returns "" if path is empty/unset
-    or the file doesn't exist.
+    system prompt via build_system_prompt) from INSTANCE_CONFIG_DIR/instance.yaml's
+    `instance_guidelines` key. Off by default: returns "" if INSTANCE_CONFIG_DIR is unset,
+    instance.yaml is absent, or the key is absent/empty.
     """
-    if not path or not path.strip():
-        return ""
-    if not os.path.exists(path):
-        logger.warning(f"Instance guidelines file not found at {path}; proceeding without it")
-        return ""
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read().strip()
+    return str(load_instance_yaml().get("instance_guidelines", "") or "").strip()
 
 
 def build_system_prompt(instance_guidelines: str = "") -> str:

@@ -229,6 +229,38 @@ from today.
 bad edit can degrade retrieval or generation quality, not just wording. Tier 2 is safe for a
 non-engineer to edit: worst case is a less helpful answer, never a broken pipeline.
 
+`instance.yaml` example, showing all four keys:
+
+```yaml
+filters:
+  crop_type: ["wheat", "maize", "cotton"]
+  title: ["Cultivation and producing Wheat", "Cultivation and producing Maize"]
+
+db_context:
+  # Short natural-language description of what's in the document store
+  # (domain, scope, time period, document types).
+  abstract: "Agricultural extension guides published by the Ministry of Agriculture, covering crop cultivation practices."
+  # Each entry: canonical term to rewrite into, plus acronyms/synonyms/variant
+  # spellings that should resolve to it, and an optional short gloss for the LLM.
+  glossary:
+    - canonical: "Egyptian Ministry of Agriculture and Land Reclamation"
+      aliases: ["MALR", "Ministry of Agriculture"]
+      definition: "Egyptian government body responsible for agricultural policy."
+
+blocklist:
+  # Additions only, per language — layered on top of the shipped list, never
+  # removes from it.
+  en: ["some-term"]
+  ar: ["مصطلح"]
+
+instance_guidelines: |
+  Keep answers focused on crop cultivation topics. Prefer metric units.
+```
+
+Note: `db_context`'s `target_language` for cross-lingual rewriting is **not** part of this
+key — it's configured separately via `[query_rewriter] target_language` in `params.cfg` (or
+`params.override.cfg`).
+
 Example layout:
 
 ```

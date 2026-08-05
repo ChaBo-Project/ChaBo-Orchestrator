@@ -30,6 +30,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from components.utils import load_instance_yaml
+
 logger = logging.getLogger(__name__)
 
 
@@ -202,9 +204,22 @@ def compile_blocklist(terms_by_lang: Dict[str, List[str]]) -> CompiledBlocklist:
 
 
 def load_compiled_blocklist(path: str) -> CompiledBlocklist:
-    """Convenience: load + compile in one call (used at startup)."""
-    compiled = compile_blocklist(load_blocklist(path))
-    logger.info(f"Output guard blocklist compiled from {path} (max_len={compiled.max_len})")
+    """
+    Convenience: load the base list from `path`, merge in
+    INSTANCE_CONFIG_DIR/instance.yaml's `blocklist` key (additions only, per language —
+    layered on top of the shipped list, never removes from it), then compile. Used at
+    startup.
+    """
+    terms_by_lang = load_blocklist(path)
+    instance_additions = load_instance_yaml().get("blocklist", {})
+    for lang, terms in instance_additions.items():
+        terms_by_lang[lang] = terms_by_lang.get(lang, []) + list(terms)
+
+    compiled = compile_blocklist(terms_by_lang)
+    logger.info(
+        f"Output guard blocklist compiled from {path} ({len(terms_by_lang)} languages"
+        f"{', with instance additions' if instance_additions else ''}, max_len={compiled.max_len})"
+    )
     return compiled
 
 

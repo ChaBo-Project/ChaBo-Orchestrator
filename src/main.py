@@ -17,11 +17,12 @@ from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
 from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
-from components.utils import getconfig, load_instance_yaml, instance_config_dir
-from components.retriever.filters import FILTER_VALUES
-from components.rewriter.db_context import DBContext
+from components.utils import getconfig, instance_config_dir
+from components.retriever.filters import FILTER_VALUES, validate_filterable_fields
+from components.rewriter.db_context import DBContext, load_db_context_from_instance
+from components.generator.prompts import load_instance_guidelines
 from components.guardrails.input_guard import InputGuardClient
-from components.guardrails.output_guard import load_blocklist, compile_blocklist
+from components.guardrails.output_guard import load_compiled_blocklist
 from components.guardrails.output_classification import OutputClassificationConfig, build_output_classification_messages
 from components.guardrails.llm_guard import build_guard_backend, DEFAULT_CLASSIFIER_MODEL
 from typing import Dict
@@ -41,15 +42,8 @@ for _item in _filterable_fields_raw.split(","):
     elif _item:
         FILTERABLE_FIELDS[_item] = "str"  # default to str if no type declared
 
-# Validate: every field declared in params.cfg must have valid values in filters.py
 if FILTERABLE_FIELDS:
-    _missing = [f for f in FILTERABLE_FIELDS if f not in FILTER_VALUES]
-    if _missing:
-        raise ValueError(
-            f"Fields declared in params.cfg [metadata_filters] are missing from filters.py: {_missing}. "
-            "Add valid values for these fields in src/components/retriever/filters.py "
-            "or remove them from filterable_fields in params.cfg."
-        )
+    validate_filterable_fields(FILTERABLE_FIELDS)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -65,7 +59,7 @@ REWRITER_ENABLED = config.getboolean("query_rewriter", "enabled", fallback=False
 
 db_context: DBContext = DBContext() # instantiating a typed object here for potential future use (e.g. with metadata filter node)
 if REWRITER_ENABLED:
-    db_context = DBContext(**load_instance_yaml().get("db_context", {}))
+    db_context = load_db_context_from_instance()
     if not db_context.abstract.strip():
         logger.warning(
             "Query rewriter: db_context.abstract is empty - running in conservative mode "
@@ -97,7 +91,7 @@ if not retriever_instance.reranker_enabled:
 # Instance-specific system prompt guidelines (optional — empty/absent = none, framework
 # defaults + base prompt only). See FRAMEWORK_VALUES in components/generator/prompts.py
 # for the non-negotiable, code-only defaults this can never override.
-INSTANCE_GUIDELINES = load_instance_yaml().get("instance_guidelines", "")
+INSTANCE_GUIDELINES = load_instance_guidelines()
 
 # Get module-specific LLM configs
 generation_client = build_llm_client(config, "generation")
@@ -187,15 +181,7 @@ if BLOCKLIST_ENABLED:
     blocklist_path = config.get(
         "output_guard", "blocklist_path", fallback="src/components/guardrails/blocklist.txt"
     )
-    terms_by_lang = load_blocklist(blocklist_path)
-    instance_blocklist = load_instance_yaml().get("blocklist", {})
-    for lang, terms in instance_blocklist.items():
-        terms_by_lang[lang] = terms_by_lang.get(lang, []) + list(terms)
-    blocklist = compile_blocklist(terms_by_lang)
-    logger.info(
-        f"Output blocklist enabled ({len(terms_by_lang)} languages"
-        f"{', with instance additions' if instance_blocklist else ''})"
-    )
+    blocklist = load_compiled_blocklist(blocklist_path)
 
 # Build the LangGraph workflow
 compiled_graph = build_workflow(

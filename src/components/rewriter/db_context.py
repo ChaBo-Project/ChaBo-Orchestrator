@@ -1,14 +1,15 @@
 """
 DBContext loader for the query rewriter (+ any other future dependent modules)
 
-Loads a per-deployment YAML artifact containing an abstract describing the doc store and a glossary.
+Loads a per-deployment abstract describing the doc store and a glossary, from
+INSTANCE_CONFIG_DIR/instance.yaml's `db_context` key.
 """
 import logging
-import os
 from typing import List, Dict, Any
 
-import yaml
 from pydantic import BaseModel, Field
+
+from components.utils import load_instance_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -24,28 +25,18 @@ class DBContext(BaseModel):
         return not self.abstract.strip() and not self.glossary
 
 
-def load_db_context(path: str) -> DBContext:
+def load_db_context_from_instance() -> DBContext:
     """
-    Load DBContext from a YAML file.
+    Load DBContext from INSTANCE_CONFIG_DIR/instance.yaml's `db_context` key.
 
-    Returns an empty DBContext if the file is missing
+    Returns an empty DBContext if INSTANCE_CONFIG_DIR is unset, instance.yaml is absent,
+    or the `db_context` key is absent/empty.
 
-    Raises ValueError on malformed YAML
+    Filters out explicit `null` values before construction: a hand-edited YAML that
+    leaves `abstract:`/`glossary:` blank parses to None in PyYAML, and DBContext's
+    typed fields (str/list) reject None outright — this keeps that case falling back
+    to the field's own default instead of raising at startup.
     """
-    if not os.path.exists(path):
-        logger.warning(f"DBContext file not found at {path}; returning empty context")
-        return DBContext()
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except yaml.YAMLError as e:
-        raise ValueError(f"Failed to parse DBContext YAML at {path}: {e}") from e
-
-    if not isinstance(data, dict):
-        raise ValueError(f"DBContext YAML at {path} must be a mapping at the top level, got {type(data).__name__}")
-
-    # Deal with malformed db_context null values
+    data = load_instance_yaml().get("db_context", {})
     data = {k: v for k, v in data.items() if v is not None}
-
     return DBContext(**data)
