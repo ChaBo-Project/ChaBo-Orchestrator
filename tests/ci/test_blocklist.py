@@ -1,5 +1,5 @@
 """
-Tests output guard streaming blocklist filter   
+Tests output guard streaming blocklist filter
 
 *No network required (.env / services etc.)
 
@@ -9,9 +9,12 @@ Pure text logic - covers:
 - term split across streamed chunks still being caught,
 - whole-word matching, single-notice behaviour
 - non-English stuff (CJK substring matching / Arabic text normalisation)
+- a long unbroken run forcing the adversarial-input cut path without losing
+  a term that lands right on the cut boundary (regression, see FeatureAndPR/PR25.md)
 """
 
 from components.guardrails.output_guard import (
+    _MAX_UNBROKEN_RUN,
     compile_blocklist,
     normalize_arabic,
     StreamingBlocklistFilter,
@@ -77,3 +80,18 @@ def test_cjk_terms_match_as_a_substring():
 def test_normalize_arabic_folds_letter_variants_and_strips_diacritics():
     # The alef variants all fold to a plain alef, so spellings match each other.
     assert normalize_arabic("أحمد") == normalize_arabic("احمد")
+
+
+def test_a_max_length_term_at_the_force_cut_boundary_is_still_caught():
+    # Regression test (see FeatureAndPR/PR25.md): a long unbroken (no-separator)
+    # run forces _flush_safe's adversarial-input cut path. A term whose length
+    # equals max_len can land a "tentative" match (StreamingBlocklistFilter._match)
+    # exactly at that cut boundary; the force-cut previously retained one char too
+    # few to reconfirm such a term once more text arrived, letting it slip through.
+    text_filter = _filter({"en": ["forbidden"]})  # max_len == 9
+    unbroken_prefix = "x" * (_MAX_UNBROKEN_RUN + 8)
+    _, hit1 = text_filter.feed(unbroken_prefix + "forbidden")
+    assert hit1 is False  # not confirmed yet - "forbidden" could still extend
+    text, hit2 = text_filter.feed(" more text")
+    assert hit2 is True
+    assert "[blocked]" in text
