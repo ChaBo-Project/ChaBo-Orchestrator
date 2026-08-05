@@ -3,7 +3,7 @@
   "release-type": "simple",
   "packages": {
     ".": {
-      "package-name": "chabo"
+      "package-name": "chabo-rag-orchestrator"
     }
   }
 }
