@@ -1,0 +1,4 @@
+# Tools used only for CI (not by the running application)
+# Install with: pip install -r requirements-dev.txt
+ruff==0.16.1
+pytest==9.0.3

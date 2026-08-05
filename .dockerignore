@@ -1,0 +1,20 @@
+# Not needed at runtime — keeps the published image to core orchestrator source only.
+tests/
+FeatureAndPR/
+docs/
+
+__pycache__/
+*.pyc
+*:Zone.Identifier
+
+.git/
+.github/
+.claude/
+chabo_env/
+.chabo_env/
+
+*.md
+!README.md
+
+.env
+.env.local

@@ -22,7 +22,7 @@ import PyPDF2
 from docx import Document as DocxDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from components.utils import get_config_value, getconfig
+from components.utils import getconfig
 
 logger = logging.getLogger(__name__)
 

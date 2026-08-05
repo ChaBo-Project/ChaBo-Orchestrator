@@ -1,0 +1,11 @@
+# ---- Linter settings ----
+# Rule set is deliberately small: "F" rules catch issues such as undefined names and unused imports
+# No styling conventions are imposed - can be added later if required
+target-version = "py311"
+line-length = 100
+
+# The older tests are not currently run by CI - can be added later
+exclude = ["tests/unit", "tests/health", "tests/eval", "data"]
+
+[lint]
+select = ["F"]
