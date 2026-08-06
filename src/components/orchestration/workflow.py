@@ -29,6 +29,8 @@ def build_workflow(
     blocked_message: str = "I'm sorry, but I can't help with that request.",
     filter_extraction_client=None,
     query_rewrite_client=None,
+    filter_extraction_steps: Optional[str] = None,
+    query_rewrite_steps: Optional[str] = None,
 ):
     """
     Build and compile the LangGraph workflow for RAG orchestration.
@@ -51,6 +53,11 @@ def build_workflow(
         blocked_message: Fixed warning for blocked_response.
         filter_extraction_client: LLMClient for extract_filters_node
         query_rewrite_client: LLMClient for rewrite_query_node
+        filter_extraction_steps: Optional prompt-override text for the extract_filters_node
+                                 prompt's "how to decide" rules (resolved once at startup
+                                 via load_prompt_overrides(), not re-read per request).
+        query_rewrite_steps: Optional prompt-override text for the rewrite_query_node
+                             prompt's "how to decide" steps (same resolution pattern).
     """
 
     if filterable_fields and filter_extraction_client is None:
@@ -69,7 +76,10 @@ def build_workflow(
     # Inject services into nodes
     r_node = partial(retrieve_node, retriever=retriever_instance)
     g_node = partial(generate_node_streaming, generator=generator_instance)
-    f_node = partial(extract_filters_node, llm_client=filter_extraction_client, filterable_fields=filterable_fields, filter_values=filter_values)
+    f_node = partial(
+        extract_filters_node, llm_client=filter_extraction_client, filterable_fields=filterable_fields,
+        filter_values=filter_values, filter_extraction_steps=filter_extraction_steps,
+    )
 
     # Add nodes
     workflow.add_node("ingest", ingest_node)
@@ -84,7 +94,10 @@ def build_workflow(
     if rewriter_enabled:
         if db_context is None:
             raise ValueError("build_workflow: rewriter_enabled=True requires a db_context")
-        rw_node = partial(rewrite_query_node, llm_client=query_rewrite_client, db_context=db_context)
+        rw_node = partial(
+            rewrite_query_node, llm_client=query_rewrite_client, db_context=db_context,
+            query_rewrite_steps=query_rewrite_steps,
+        )
         workflow.add_node("rewrite_query", rw_node)
         workflow.add_edge("ingest", "rewrite_query")
         workflow.add_edge("rewrite_query", "extract_filters")

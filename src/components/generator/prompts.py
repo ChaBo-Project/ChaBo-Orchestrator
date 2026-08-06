@@ -1,9 +1,8 @@
 import json
 import logging
-import os
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from components.utils import getconfig
+from components.utils import getconfig, load_instance_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -96,19 +95,14 @@ FOLLOW-UP QUESTIONS (OPTIONAL):
 """
 
 
-def load_instance_guidelines(path: str) -> str:
+def load_instance_guidelines() -> str:
     """
     Load optional per-deployment instance guidelines (plain text, appended to the base
-    system prompt via build_system_prompt). Off by default: returns "" if path is empty/unset
-    or the file doesn't exist.
+    system prompt via build_system_prompt) from INSTANCE_CONFIG_DIR/instance.yaml's
+    `instance_guidelines` key. Off by default: returns "" if INSTANCE_CONFIG_DIR is unset,
+    instance.yaml is absent, or the key is absent/empty.
     """
-    if not path or not path.strip():
-        return ""
-    if not os.path.exists(path):
-        logger.warning(f"Instance guidelines file not found at {path}; proceeding without it")
-        return ""
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read().strip()
+    return str(load_instance_yaml().get("instance_guidelines", "") or "").strip()
 
 
 def build_system_prompt(instance_guidelines: str = "") -> str:
@@ -116,8 +110,8 @@ def build_system_prompt(instance_guidelines: str = "") -> str:
     Compose the full system prompt from three layers:
       1. FRAMEWORK_VALUES - framework-owner defaults, code-only, never sourced from config.
       2. BASE_PROMPT - generic RAG instructions, safe to share across every deployment.
-      3. instance_guidelines - optional, per-deployment (see [generator] instance_guidelines_path
-         in params.cfg). Explicitly subordinate to FRAMEWORK_VALUES on conflict.
+      3. instance_guidelines - optional, per-deployment (see INSTANCE_CONFIG_DIR/instance.yaml's
+         instance_guidelines key). Explicitly subordinate to FRAMEWORK_VALUES on conflict.
     """
     parts = [FRAMEWORK_VALUES, BASE_PROMPT]
     if instance_guidelines and instance_guidelines.strip():
@@ -133,17 +127,39 @@ def build_system_prompt(instance_guidelines: str = "") -> str:
 system_prompt = build_system_prompt()
 
 
+# Default extraction rules (the "how to decide" portion) — overridable per-instance via
+# INSTANCE_CONFIG_DIR/prompt_overrides.md's `## filter_extraction_steps` section. Tier-1,
+# "change at your own risk": a bad override can degrade extraction quality, but can never
+# break the JSON parser, since the schema/output-contract below is always appended
+# separately and is never itself overridable.
+_FILTER_EXTRACTION_DEFAULT_RULES = (
+    "- Examine EACH field INDEPENDENTLY — finding a value for one field must not cause you to skip others.\n"
+    "- For EACH field: first check the CURRENT QUERY. If a value is explicitly stated, use it.\n"
+    "- For EACH field: if not found in CURRENT QUERY, check PREVIOUS USER MESSAGES for a value "
+    "established in an earlier turn that still logically applies. If found, carry it forward.\n"
+    "- Only extract values EXPLICITLY stated by the user. Do NOT infer or assume.\n"
+    "- For fields with a valid values list, always pick the closest match from that list.\n"
+    "- For list-type fields, output a JSON array of strings.\n"
+    "- For str/int fields, output a single value."
+)
+
+
 def build_filter_extraction_messages(
     filterable_fields: dict,
     filter_values: dict,
     query: str,
-    user_messages_history: str
+    user_messages_history: str,
+    filter_extraction_steps: str = None,
 ) -> list:
     """
     Build [SystemMessage, HumanMessage] for LLM-based metadata filter extraction.
 
     Separated from the node so prompt wording can be tuned without touching orchestration logic.
     Called by extract_filters_node in nodes.py.
+
+    filter_extraction_steps: resolved once at startup (main.py, via load_prompt_overrides())
+        and injected per-request via partial() — never read from disk here, this is called
+        on every chat turn. None falls back to _FILTER_EXTRACTION_DEFAULT_RULES.
     """
     field_descriptions = []
     for field, ftype in filterable_fields.items():
@@ -161,21 +177,16 @@ def build_filter_extraction_messages(
         field_descriptions.append(base)
     fields_desc = "\n".join(f"  - {d}" for d in field_descriptions)
 
+    rules = filter_extraction_steps or _FILTER_EXTRACTION_DEFAULT_RULES
+
     system_msg = SystemMessage(content=(
         "You are a metadata filter extraction assistant.\n"
         f"Available filterable fields:\n{fields_desc}\n\n"
         "Extraction rules:\n"
-        "- Examine EACH field INDEPENDENTLY — finding a value for one field must not cause you to skip others.\n"
-        "- For EACH field: first check the CURRENT QUERY. If a value is explicitly stated, use it.\n"
-        "- For EACH field: if not found in CURRENT QUERY, check PREVIOUS USER MESSAGES for a value "
-        "established in an earlier turn that still logically applies. If found, carry it forward.\n"
-        "- Only extract values EXPLICITLY stated by the user. Do NOT infer or assume.\n"
-        "- For fields with a valid values list, always pick the closest match from that list.\n"
-        "- For list-type fields, output a JSON array of strings.\n"
-        "- For str/int fields, output a single value.\n"
-        "- Return ONLY a valid JSON object, no markdown fences, no explanation.\n"
-        "- If no filters found for any field, return: {}\n"
-        f"- Only use keys from: {list(filterable_fields.keys())}"
+        f"{rules}\n\n"
+        "Return ONLY a valid JSON object, no markdown fences, no explanation.\n"
+        "If no filters found for any field, return: {}\n"
+        f"Only use keys from: {list(filterable_fields.keys())}"
     ))
 
     human_msg = HumanMessage(content=(
@@ -188,10 +199,36 @@ def build_filter_extraction_messages(
     return [system_msg, human_msg]
 
 
+# Default rewriting steps (the "how to decide" portion) — overridable per-instance via
+# INSTANCE_CONFIG_DIR/prompt_overrides.md's `## query_rewrite_steps` section. Tier-1,
+# "change at your own risk": a bad override can degrade rewrite quality, but can never
+# break the JSON parser, since the schema/output-contract below is always appended
+# separately and is never itself overridable.
+_QUERY_REWRITE_DEFAULT_STEPS = (
+    "Tasks (apply only when warranted by the input):\n"
+    "  1. Abbreviation & term normalisation — expand acronyms and canonicalise entities against the glossary (if provided - see below).\n"
+    "  2. Pronoun & reference resolution — resolve pronouns to full entity names and elided references against the conversation history.\n"
+    "  3. Query expansion & completion — identify implicit intent and emphasise explicitly; fill in elided context.\n"
+    "  4. Language & style normalisation — translate into the target language if set; strip filler, emotion, and rhetorical phrasing; rewrite into a declarative search target.\n"
+    "\n"
+    "Rules:\n"
+    "  - Preserve the user's original intent. Do not invent facts. Do not contradict the original query.\n"
+    "  - Use the glossary (if provided) as the source of truth for term normalisation. Do not rewrite terms that are not covered by the glossary or are clearly redundant filler.\n"
+    "  - If a glossary is NOT provided: do not expand acronyms or domain terms (unless the meaning is crystal clear from the context).\n"
+    "  - If unsure, return the original query unchanged."
+)
+
+_QUERY_REWRITE_SCHEMA_BLOCK = (
+    "  - Return ONLY a valid JSON object, no markdown fences, no explanation.\n"
+    '  - Output schema: {"query_rewrite": "<string>", "notes": {"scenarios_applied": [<list of scenario numbers>], "glossary_terms_used": [<canonical terms>], "detected_language": "<iso code or null>"}}'
+)
+
+
 def build_query_rewrite_messages(
     db_context,
     query: str,
     conversation_context: str = None,
+    query_rewrite_steps: str = None,
 ) -> list:
     """
     Build [SystemMessage, HumanMessage] for the single-call query rewriter.
@@ -204,6 +241,9 @@ def build_query_rewrite_messages(
             language is read from params.cfg at module load (see TARGET_LANGUAGE), not db_context.
         query: raw user query (current turn)
         conversation_context: optional prior turns (USER/ASSISTANT transcript)
+        query_rewrite_steps: resolved once at startup (main.py, via load_prompt_overrides())
+            and injected per-request via partial() — never read from disk here, this is
+            called on every chat turn. None falls back to _QUERY_REWRITE_DEFAULT_STEPS.
 
     Returns:
         [SystemMessage, HumanMessage]. The LLM is expected to return JSON of shape
@@ -211,24 +251,16 @@ def build_query_rewrite_messages(
     """
     raw_flag = not db_context.abstract.strip() and not db_context.glossary
 
+    steps = query_rewrite_steps or _QUERY_REWRITE_DEFAULT_STEPS
+
     # Instructions
     system_lines = [
         "You are a query rewriter for a retrieval-augmented generation system.",
         "Your job is to produce a single rewritten query that improves vector-store retrieval.",
         "",
-        "Tasks (apply only when warranted by the input):",
-        "  1. Abbreviation & term normalisation — expand acronyms and canonicalise entities against the glossary (if provided - see below).",
-        "  2. Pronoun & reference resolution — resolve pronouns to full entity names and elided references against the conversation history.",
-        "  3. Query expansion & completion — identify implicit intent and emphasise explicitly; fill in elided context.",
-        "  4. Language & style normalisation — translate into the target language if set; strip filler, emotion, and rhetorical phrasing; rewrite into a declarative search target.",
+        steps,
         "",
-        "Rules:",
-        "  - Preserve the user's original intent. Do not invent facts. Do not contradict the original query.",
-        "  - Use the glossary (if provided) as the source of truth for term normalisation. Do not rewrite terms that are not covered by the glossary or are clearly redundant filler.",
-        "  - If a glossary is NOT provided: do not expand acronyms or domain terms (unless the meaning is crystal clear from the context). "
-        "  - If unsure, return the original query unchanged.",
-        "  - Return ONLY a valid JSON object, no markdown fences, no explanation.",
-        '  - Output schema: {"query_rewrite": "<string>", "notes": {"scenarios_applied": [<list of scenario numbers>], "glossary_terms_used": [<canonical terms>], "detected_language": "<iso code or null>"}}',
+        _QUERY_REWRITE_SCHEMA_BLOCK,
     ]
 
     if raw_flag:

@@ -257,6 +257,7 @@ async def extract_filters_node(
     llm_client: "LLMClient",
     filterable_fields: Dict[str, str],
     filter_values: Dict[str, list],
+    filter_extraction_steps: Optional[str] = None,
 ) -> "GraphState":
     """
     Node to extract metadata filters from query + user conversation history before retrieval.
@@ -277,7 +278,10 @@ async def extract_filters_node(
     user_messages_history = state.get("user_messages_history") or "(none)"
 
     try:
-        messages = build_filter_extraction_messages(filterable_fields, filter_values, query, user_messages_history)
+        messages = build_filter_extraction_messages(
+            filterable_fields, filter_values, query, user_messages_history,
+            filter_extraction_steps=filter_extraction_steps,
+        )
         raw = await llm_client.ainvoke(messages)
         filters = _parse_filter_response(raw, filterable_fields)
     except Exception as e:
@@ -327,6 +331,7 @@ async def rewrite_query_node(
     db_context: "DBContext",
     *,
     writer,
+    query_rewrite_steps: Optional[str] = None,
 ) -> "GraphState":
     """
     Node to rewrite user query.
@@ -353,7 +358,10 @@ async def rewrite_query_node(
         }
 
     try:
-        messages = build_query_rewrite_messages(db_context, original_query, conversation_context)
+        messages = build_query_rewrite_messages(
+            db_context, original_query, conversation_context,
+            query_rewrite_steps=query_rewrite_steps,
+        )
         raw = await llm_client.ainvoke(messages)
         parsed = _parse_rewrite_response(raw)
     except Exception as e:

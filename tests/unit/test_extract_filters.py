@@ -15,14 +15,27 @@ logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(mes
 
 from components.generator.generator_orchestrator import Generator
 from components.orchestration.nodes import extract_filters_node
-from components.retriever.filters import FILTER_VALUES
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
+# Local fixture, not components.retriever.filters.FILTER_VALUES — that now resolves
+# to {} unless INSTANCE_CONFIG_DIR is set (real values are instance content, no longer
+# committed to source). This test needs valid values for its own cases regardless of
+# what INSTANCE_CONFIG_DIR happens to be set to when it's run. Tests aren't packaged
+# into the published image, so this can be — and is — a real sample drawn from an
+# actual instance's document collection (agricultural data), not synthetic content.
 
 FILTERABLE_FIELDS = {
     "crop_type": "list",
     "title": "str",
+}
+
+FILTER_VALUES = {
+    "crop_type": ["wheat", "maize"],
+    "title": [
+        "Cultivation and producing Maize",
+        "Maize cultivation in the old and new lands",
+    ],
 }
 
 # ── Test cases ────────────────────────────────────────────────────────────────
