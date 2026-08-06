@@ -250,10 +250,9 @@ Both modes implement the same AND-safeguard retry logic. Clients are initialised
 ## Filter Values Contract
 
 Allowed values for each filterable field are **instance content, not source** — they live in
-`INSTANCE_CONFIG_DIR/instance.yaml`'s `filters` key, not in `src/components/retriever/filters.py`.
-`filters.py` itself just does `FILTER_VALUES = load_instance_yaml().get("filters", {})` and exposes
-`validate_filterable_fields()`; it ships with no real values, by design (the published image is
-instance-blind — see README's "Instance Configuration").
+`INSTANCE_CONFIG_DIR/instance.yaml`'s `filters` key, loaded via `load_instance_yaml()` and exposed
+through `validate_filterable_fields()`. No real values ship in the repo, by design (the published
+image is instance-blind — see README's "Instance Configuration").
 
 - **Keys must exactly match** field names declared in `[metadata_filters] filterable_fields` in `params.cfg`
 - **Every declared field must have an entry** — `main.py` calls `filters.validate_filterable_fields()` at

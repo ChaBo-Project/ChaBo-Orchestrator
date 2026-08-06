@@ -2,7 +2,7 @@ import json
 import logging
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from components.utils import getconfig, load_prompt_overrides, load_instance_yaml
+from components.utils import getconfig, load_instance_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -148,13 +148,18 @@ def build_filter_extraction_messages(
     filterable_fields: dict,
     filter_values: dict,
     query: str,
-    user_messages_history: str
+    user_messages_history: str,
+    filter_extraction_steps: str = None,
 ) -> list:
     """
     Build [SystemMessage, HumanMessage] for LLM-based metadata filter extraction.
 
     Separated from the node so prompt wording can be tuned without touching orchestration logic.
     Called by extract_filters_node in nodes.py.
+
+    filter_extraction_steps: resolved once at startup (main.py, via load_prompt_overrides())
+        and injected per-request via partial() — never read from disk here, this is called
+        on every chat turn. None falls back to _FILTER_EXTRACTION_DEFAULT_RULES.
     """
     field_descriptions = []
     for field, ftype in filterable_fields.items():
@@ -172,7 +177,7 @@ def build_filter_extraction_messages(
         field_descriptions.append(base)
     fields_desc = "\n".join(f"  - {d}" for d in field_descriptions)
 
-    rules = load_prompt_overrides().get("filter_extraction_steps", _FILTER_EXTRACTION_DEFAULT_RULES)
+    rules = filter_extraction_steps or _FILTER_EXTRACTION_DEFAULT_RULES
 
     system_msg = SystemMessage(content=(
         "You are a metadata filter extraction assistant.\n"
@@ -223,6 +228,7 @@ def build_query_rewrite_messages(
     db_context,
     query: str,
     conversation_context: str = None,
+    query_rewrite_steps: str = None,
 ) -> list:
     """
     Build [SystemMessage, HumanMessage] for the single-call query rewriter.
@@ -235,6 +241,9 @@ def build_query_rewrite_messages(
             language is read from params.cfg at module load (see TARGET_LANGUAGE), not db_context.
         query: raw user query (current turn)
         conversation_context: optional prior turns (USER/ASSISTANT transcript)
+        query_rewrite_steps: resolved once at startup (main.py, via load_prompt_overrides())
+            and injected per-request via partial() — never read from disk here, this is
+            called on every chat turn. None falls back to _QUERY_REWRITE_DEFAULT_STEPS.
 
     Returns:
         [SystemMessage, HumanMessage]. The LLM is expected to return JSON of shape
@@ -242,7 +251,7 @@ def build_query_rewrite_messages(
     """
     raw_flag = not db_context.abstract.strip() and not db_context.glossary
 
-    steps = load_prompt_overrides().get("query_rewrite_steps", _QUERY_REWRITE_DEFAULT_STEPS)
+    steps = query_rewrite_steps or _QUERY_REWRITE_DEFAULT_STEPS
 
     # Instructions
     system_lines = [

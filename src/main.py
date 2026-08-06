@@ -17,7 +17,7 @@ from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
 from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
-from components.utils import getconfig, instance_config_dir
+from components.utils import getconfig, instance_config_dir, load_prompt_overrides
 from components.retriever.filters import FILTER_VALUES, validate_filterable_fields
 from components.rewriter.db_context import DBContext, load_db_context_from_instance
 from components.generator.prompts import load_instance_guidelines
@@ -92,6 +92,10 @@ if not retriever_instance.reranker_enabled:
 # defaults + base prompt only). See FRAMEWORK_VALUES in components/generator/prompts.py
 # for the non-negotiable, code-only defaults this can never override.
 INSTANCE_GUIDELINES = load_instance_guidelines()
+
+# Tier-1 prompt overrides (optional — resolved once at startup, not per-request; see
+# load_prompt_overrides() docstring). Each node gets its own section via partial() below.
+PROMPT_OVERRIDES = load_prompt_overrides()
 
 # Get module-specific LLM configs
 generation_client = build_llm_client(config, "generation")
@@ -196,6 +200,8 @@ compiled_graph = build_workflow(
     blocked_message=INPUT_GUARD_MSG,
     filter_extraction_client=filter_extraction_client,
     query_rewrite_client=query_rewrite_client,
+    filter_extraction_steps=PROMPT_OVERRIDES.get("filter_extraction_steps"),
+    query_rewrite_steps=PROMPT_OVERRIDES.get("query_rewrite_steps"),
 )
 
 

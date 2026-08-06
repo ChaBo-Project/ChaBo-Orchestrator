@@ -213,7 +213,11 @@ def load_compiled_blocklist(path: str) -> CompiledBlocklist:
     terms_by_lang = load_blocklist(path)
     instance_additions = load_instance_yaml().get("blocklist", {})
     for lang, terms in instance_additions.items():
-        terms_by_lang[lang] = terms_by_lang.get(lang, []) + list(terms)
+        if not isinstance(terms, list):
+            raise ValueError(
+                f"instance.yaml 'blocklist.{lang}' must be a list of terms, got {type(terms).__name__}"
+            )
+        terms_by_lang[lang] = terms_by_lang.get(lang, []) + terms
 
     compiled = compile_blocklist(terms_by_lang)
     logger.info(
