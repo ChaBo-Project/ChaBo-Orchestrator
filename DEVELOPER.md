@@ -73,7 +73,7 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │  ingestor/upload_parquet.py            generator/sources.py          │
 │  generator/generator_orchestrator.py   orchestration/telemetry.py   │
 │  orchestration/ui_adapters.py (core)   utils.py                      │
-│  api/ (openai_compat, documents, document_store)                     │
+│  api/ (openai_compat)                                                 │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
