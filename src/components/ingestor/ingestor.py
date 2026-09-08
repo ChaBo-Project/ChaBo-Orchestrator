@@ -23,8 +23,6 @@ import PyPDF2
 from docx import Document as DocxDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from components.utils import getconfig
-
 logger = logging.getLogger(__name__)
 
 
@@ -119,13 +117,14 @@ def clean_and_chunk_text(text: str, config) -> str:
     return "\n\n".join(context_parts)
 
 
-def process_document(file_content: bytes, filename: str) -> str:
+def process_document(file_content: bytes, filename: str, config) -> str:
     """
     Main document processing function - processes file and returns chunked context.
 
     Args:
         file_content: Raw bytes of the uploaded file
         filename: Name of the file (used to determine file type)
+        config: Loaded in main.py
 
     Returns:
         Formatted chunked context string ready for RAG pipeline
@@ -135,9 +134,6 @@ def process_document(file_content: bytes, filename: str) -> str:
         Exception: If processing fails
     """
     try:
-        # Load config
-        config = getconfig("params.cfg")
-
         # Extract text based on file type (in memory)
         file_extension = os.path.splitext(filename)[1].lower()
 
@@ -170,7 +166,7 @@ def process_document(file_content: bytes, filename: str) -> str:
         raise Exception(f"Processing failed: {str(e)}")
 
 
-def process_text(text: str, filename: str = "attachment") -> str:
+def process_text(text: str, filename: str, config) -> str:
     """
     Chunk already-extracted text into the same context format as process_document().
 
@@ -180,11 +176,11 @@ def process_text(text: str, filename: str = "attachment") -> str:
     Args:
         text: Plain text of the attachment
         filename: Name of the file, used for logging and citation labelling only
+        config: Loaded in main.py
 
     Returns:
         Formatted chunked context string ready for RAG pipeline
     """
-    config = getconfig("params.cfg")
     context = clean_and_chunk_text(text, config)
     logger.info(f"Successfully processed text attachment {filename}: {len(text)} characters")
     return context

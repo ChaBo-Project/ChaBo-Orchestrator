@@ -83,7 +83,7 @@ def extract_text(content: Union[str, List[Dict[str, Any]], None]) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def resolve_attachments(request: ChatCompletionRequest) -> tuple[Optional[str], Optional[str]]:
+def resolve_attachments(request: ChatCompletionRequest, config) -> tuple[Optional[str], Optional[str]]:
     """
     Resolve this turn's attachments to (ingestor_context, filename).
 
@@ -91,7 +91,16 @@ def resolve_attachments(request: ChatCompletionRequest) -> tuple[Optional[str], 
     blow the context window just because the frontend did the extraction. `filename` is the
     citation label only - nothing is parsed from it.
 
+    config is passed through to process_text() from main.py
+
+    MAX 1 ATTACHMENT PER TURN
     """
+    if request.files and len(request.files) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Only one attachment per turn is supported. Send a separate turn per file.",
+        )
+
     chunks: List[str] = []
     names: List[str] = []
 
@@ -107,7 +116,7 @@ def resolve_attachments(request: ChatCompletionRequest) -> tuple[Optional[str], 
                        "{'name': ..., 'content': '<extracted text>'}.",
             )
         try:
-            chunks.append(process_text(text, name))
+            chunks.append(process_text(text, name, config))
         except Exception as e:
             logger.error("Attachment processing failed for %s: %s", name, e, exc_info=True)
             raise HTTPException(
@@ -123,6 +132,7 @@ def resolve_attachments(request: ChatCompletionRequest) -> tuple[Optional[str], 
 def build_openai_router(
     compiled_graph,
     *,
+    config,
     model_name: str = "chabo",
     max_turns: int = 3,
     max_chars: int = 8000,
@@ -154,7 +164,7 @@ def build_openai_router(
         if not (query or "").strip():
             raise HTTPException(status_code=400, detail="No user message found in `messages`.")
 
-        ingestor_context, filename = resolve_attachments(request)
+        ingestor_context, filename = resolve_attachments(request, config)
 
         return process_query_streaming(
             compiled_graph=compiled_graph,
@@ -227,8 +237,12 @@ def build_openai_router(
         # Non-streaming: same pipeline, same renderer output, collected into one message.
         renderer = MarkdownRenderer(trailing_flush_delay=0.0)
         parts = []
-        async for piece in _consume_stream(process_iter, output_filter, classifier, renderer):
-            parts.append(piece)
+        try:
+            async for piece in _consume_stream(process_iter, output_filter, classifier, renderer):
+                parts.append(piece)
+        except Exception as e:
+            logger.error("OpenAI non-streaming request failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e
         content = "".join(parts)
 
         response: Dict[str, Any] = {

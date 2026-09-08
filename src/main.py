@@ -199,6 +199,7 @@ if BLOCKLIST_ENABLED:
 compiled_graph = build_workflow(
     retriever_instance,
     generator_instance,
+    config,
     filterable_fields=FILTERABLE_FIELDS,
     filter_values=FILTER_VALUES,
     db_context=db_context if REWRITER_ENABLED else None,
@@ -246,6 +247,7 @@ async def root():
 app.include_router(
     build_openai_router(
         compiled_graph,
+        config=config,
         model_name=API_MODEL_NAME,
         max_turns=MAX_TURNS,
         max_chars=MAX_CHARS,

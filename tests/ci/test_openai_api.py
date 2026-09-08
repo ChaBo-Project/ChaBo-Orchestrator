@@ -11,6 +11,7 @@ Covers:
 - conversation history, message content-parts, and rejected requests
 - text attachments reaching the graph state, chunked and labelled
 """
+import configparser
 import json
 
 from fastapi import FastAPI
@@ -42,6 +43,7 @@ class FakeGraph:
 
 def build_client(graph=None, **kwargs):
     graph = graph or FakeGraph()
+    kwargs.setdefault("config", configparser.ConfigParser())
     app = FastAPI()
     app.include_router(build_openai_router(graph, **kwargs))
     return TestClient(app), graph
@@ -205,13 +207,13 @@ def test_a_text_attachment_is_chunked_into_the_graph_state():
     assert graph.last_state["ingestor_context"] == "[Chunk 1]: Wheat is sown in November."
 
 
-def test_several_attachments_are_concatenated_in_order():
-    client, graph = build_client()
-    client.post("/v1/chat/completions", json={**ONE_TURN, "files": [
+def test_several_attachments_are_rejected():
+    client, _ = build_client()
+    response = client.post("/v1/chat/completions", json={**ONE_TURN, "files": [
         {"name": "a.pdf", "content": "first doc"},
         {"name": "b.pdf", "content": "second doc"},
     ]})
-    assert graph.last_state["ingestor_context"] == "[Chunk 1]: first doc\n\n[Chunk 1]: second doc"
+    assert response.status_code == 400
 
 
 def test_attachment_names_become_the_citation_label():
