@@ -1,8 +1,8 @@
 """
 OpenAI-compatible chat surface: POST /v1/chat/completions, GET /v1/models.
 
-Endpoint for standardized chat frontends (OpenWebUI, LibreChat etc.) 
-Uses the same graph as Chabo-ChatUI - i.e. `_consume_stream` (only the renderer differs).
+Endpoint for standardized chat frontends (OpenWebUI, LibreChat etc.)
+Uses the same graph as Chabo-ChatUI - i.e. `consume_stream` (only the renderer differs).
 
 Deviations from OpenAI's API:
 - Sampling parameters (`temperature`, `top_p`, `max_tokens`, …) are ignored.
@@ -27,10 +27,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from components.guardrails.output_classification import OutputClassificationConfig
 from components.ingestor.ingestor import process_text
 from components.orchestration.renderers import MarkdownRenderer, OpenAIChunkRenderer
-from components.orchestration.ui_adapters import (
-    _consume_stream,
-    _make_output_classifier,
-    _make_output_filter,
+from components.orchestration.streaming import (
+    consume_stream,
+    make_output_classifier,
+    make_output_filter,
     prepare_conversation,
     process_query_streaming,
 )
@@ -203,8 +203,8 @@ def build_openai_router(
         request_id = f"chatcmpl-{uuid.uuid4().hex}"
         process_iter = _run_pipeline(request)
 
-        output_filter = _make_output_filter(blocklist, blocklist_notice)
-        classifier = _make_output_classifier(classification_config)
+        output_filter = make_output_filter(blocklist, blocklist_notice)
+        classifier = make_output_classifier(classification_config)
 
         if request.stream:
             renderer = OpenAIChunkRenderer(
@@ -215,7 +215,7 @@ def build_openai_router(
 
             async def event_stream():
                 try:
-                    async for frame in _consume_stream(
+                    async for frame in consume_stream(
                         process_iter, output_filter, classifier, renderer
                     ):
                         yield frame
@@ -238,7 +238,7 @@ def build_openai_router(
         renderer = MarkdownRenderer(trailing_flush_delay=0.0)
         parts = []
         try:
-            async for piece in _consume_stream(process_iter, output_filter, classifier, renderer):
+            async for piece in consume_stream(process_iter, output_filter, classifier, renderer):
                 parts.append(piece)
         except Exception as e:
             logger.error("OpenAI non-streaming request failed: %s", e, exc_info=True)

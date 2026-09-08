@@ -119,6 +119,6 @@ Three ChatUI-shaped workarounds can then be deprecated:
 ## Adding another frontend
 
 Subclass `BaseRenderer` in `src/components/orchestration/renderers.py` and pass an instance
-to `_consume_stream`. Everything else — graph, guards, footnote, citation logic — is shared:
-`_consume_stream` is the only consumer of the internal event stream, so a new frontend never
-forks the streaming logic.
+to `consume_stream` (`src/components/orchestration/streaming.py`). Everything else — graph,
+guards, footnote, citation logic — is shared: `consume_stream` is the only consumer of the
+internal event stream, so a new frontend never forks the streaming logic.

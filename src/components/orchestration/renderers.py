@@ -2,7 +2,7 @@
 Frontend renderers: turn ChaBo's internal event stream into a wire format.
 
 The graph emits a small typed event stream (data / filters_applied / sources / error / end).
-`_consume_stream` (ui_adapters.py) is the single consumer of that stream and owns the output
+`consume_stream` (streaming.py) is the single consumer of that stream and owns the output
 guards; a *renderer* owns the separate question of what those semantic outputs look like on
 the wire. Adding a frontend is therefore a new renderer, not a fork of the streaming logic.
 
@@ -95,7 +95,7 @@ def citation_list(sources_collected) -> List[str]:
 
 class BaseRenderer:
     """
-    Interface `_consume_stream` renders through.
+    Interface `consume_stream` renders through.
 
     Each hook returns the text to put on the wire, or None to emit nothing. Renderers are
     constructed per request.

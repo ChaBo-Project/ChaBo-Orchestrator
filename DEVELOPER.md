@@ -72,7 +72,7 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │  retriever/retriever_orchestrator.py   ingestor/ingestor.py          │
 │  ingestor/upload_parquet.py            generator/sources.py          │
 │  generator/generator_orchestrator.py   orchestration/telemetry.py   │
-│  orchestration/ui_adapters.py (core)   utils.py                      │
+│  orchestration/streaming.py (core)     utils.py                      │
 │  api/ (openai_compat)                                                 │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -110,7 +110,8 @@ src/
     │   ├── workflow.py                         # Builds and compiles the LangGraph state machine — EXTEND
     │   ├── nodes.py                            # The 4 async graph node functions — EXTEND
     │   ├── state.py                            # GraphState TypedDict + ChatUIInput / ChatUIFileInput Pydantic models — EXTEND
-    │   ├── ui_adapters.py                      # Request unpacking + _consume_stream (the single event consumer, owns the output guards) — INFRASTRUCTURE
+    │   ├── streaming.py                        # Frontend-agnostic pipeline: process_query_streaming + consume_stream (the single event consumer, owns the output guards), request unpacking — INFRASTRUCTURE
+    │   ├── ui_adapters.py                      # Chabo-ChatUI (LangServe) adapters only — chatui_adapter, chatui_file_adapter — INFRASTRUCTURE
     │   ├── renderers.py                        # Internal event stream → wire format, one class per frontend — EXTEND (add a frontend)
     │   │                                       # Optional customize: format_filters_footnote() controls filter display text
     │   └── telemetry.py                        # Extracts retriever telemetry from Document metadata for logging — INFRASTRUCTURE
@@ -146,7 +147,7 @@ POST /chatfed-ui-stream
       - Builds user_messages_history — user-only turns (no assistant text) for filter extraction
       - Calls process_query_streaming()
 
-  → process_query_streaming() [ui_adapters.py]
+  → process_query_streaming() [streaming.py]
       - Constructs initial GraphState dict
       - compiled_graph.astream(initial_state, stream_mode="custom")
 
@@ -222,19 +223,19 @@ For file uploads the flow is identical via `chatui_file_adapter` / `/chatfed-wit
 
 | Field | Type | Written by | Read by | Purpose |
 |-------|------|-----------|---------|---------|
-| `query` | `str` | `ui_adapters` | all nodes | Current user query |
-| `conversation_context` | `str` | `ui_adapters` | `generate_node` | Full N-turn history for LLM generation |
-| `user_messages_history` | `str` | `ui_adapters` | `extract_filters_node` | User-only turns — no assistant text, no retrieved content |
-| `file_content` | `bytes` | `ui_adapters` | `ingest_node` | Raw uploaded file bytes |
-| `filename` | `str` | `ui_adapters` | `ingest_node`, `generate_node` | Uploaded filename (used as source label) |
+| `query` | `str` | `streaming.py` | all nodes | Current user query |
+| `conversation_context` | `str` | `streaming.py` | `generate_node` | Full N-turn history for LLM generation |
+| `user_messages_history` | `str` | `streaming.py` | `extract_filters_node` | User-only turns — no assistant text, no retrieved content |
+| `file_content` | `bytes` | `streaming.py` | `ingest_node` | Raw uploaded file bytes |
+| `filename` | `str` | `streaming.py` | `ingest_node`, `generate_node` | Uploaded filename (used as source label) |
 | `ingestor_context` | `str` | `ingest_node` | `generate_node` | Chunked text extracted from uploaded document |
 | `metadata_filters` | `dict` | `extract_filters_node` | `retrieve_node` | LLM-extracted `{field: value}` filters, or `None` |
 | `raw_documents` | `List[Document]` | `retrieve_node` | `generate_node` | Reranked documents returned by the retriever |
-| `applied_filters` | `dict` | `retrieve_node` | `ui_adapters` (via event) | Actual filter used — may differ if AND-safeguard fired |
-| `filters_narrowed` | `bool` | `retrieve_node` | `ui_adapters` (via event) | `True` if AND-safeguard fired and fell back to priority field |
+| `applied_filters` | `dict` | `retrieve_node` | `streaming.py` (via event) | Actual filter used — may differ if AND-safeguard fired |
+| `filters_narrowed` | `bool` | `retrieve_node` | `streaming.py` (via event) | `True` if AND-safeguard fired and fell back to priority field |
 | `metadata` | `dict` | all nodes | — | Per-request telemetry (durations, success flags, counts) |
 
-`applied_filters` and `filters_narrowed` reach `ui_adapters` via a LangGraph custom event (`writer({"event": "filters_applied", ...})`), not by reading state directly after graph completion.
+`applied_filters` and `filters_narrowed` reach `streaming.py`'s `process_query_streaming` via a LangGraph custom event (`writer({"event": "filters_applied", ...})`), not by reading state directly after graph completion.
 
 ---
 
@@ -308,7 +309,7 @@ Edit `format_filters_footnote()` in `renderers.py` to change the wording, emoji,
 
 ### Add a frontend
 
-Subclass `BaseRenderer` in `renderers.py` (text / notice / footnote / sources / error / prelude / finish) and pass an instance to `_consume_stream`. The graph, the output guards, and the citation logic are shared. See `docs/frontend-integration.md`.
+Subclass `BaseRenderer` in `renderers.py` (text / notice / footnote / sources / error / prelude / finish) and pass an instance to `consume_stream` (`streaming.py`). The graph, the output guards, and the citation logic are shared. See `docs/frontend-integration.md`.
 
 ### Change retrieval parameters at runtime
 
@@ -322,5 +323,5 @@ Subclass `BaseRenderer` in `renderers.py` (text / notice / footnote / sources / 
 |----------|-------|
 | `nodes.py` top docstring | Says "NEEDS TO BE UPDATED" — safe to ignore, the code is current |
 | `nodes.py` lines ~290–390 | Large block of commented-out old `retrieve_node` implementations — dead code, pending cleanup |
-| `ui_adapters.py:39` | Comment "TO BE REPLACED WITH AGENTIC WORKFLOW" — `process_query_streaming` is functional but flagged for future rework |
+| `streaming.py` | `process_query_streaming` is functional but flagged for future rework toward an agentic workflow |
 | `state.py` `raw_context` field | Listed as "Alias for backward compatibility" — not written by any current node, candidate for removal |

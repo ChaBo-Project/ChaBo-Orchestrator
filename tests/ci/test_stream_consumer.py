@@ -1,9 +1,9 @@
 """
-Tests for the shared event consumer (`_consume_stream` in orchestration/ui_adapters.py).
+Tests for the shared event consumer (`consume_stream` in orchestration/streaming.py).
 
 *No network required (.env / services etc.)
 
-`_consume_stream` is the single place the internal event stream is turned into output, for
+`consume_stream` is the single place the internal event stream is turned into output, for
 every frontend: it owns the output guards and delegates formatting to a renderer. These
 tests pin the parts that must hold whichever renderer is in use — in particular that a
 guard-blocked stream still terminates cleanly on the wire.
@@ -13,7 +13,7 @@ import json
 
 from components.guardrails.output_guard import StreamingBlocklistFilter, compile_blocklist
 from components.orchestration.renderers import MarkdownRenderer, OpenAIChunkRenderer
-from components.orchestration.ui_adapters import _consume_stream
+from components.orchestration.streaming import consume_stream
 
 SOURCES = [{"title": "Wheat guide", "uri": "https://example.org/wheat"}]
 FILTERS = {"filters": {"crop_type": ["wheat"]}, "narrowed": False}
@@ -37,7 +37,7 @@ def _answer(*chunks, sources=True, filters=True):
 
 def _drain(process_iter, output_filter=None, classifier=None, renderer=None):
     async def run():
-        return [piece async for piece in _consume_stream(
+        return [piece async for piece in consume_stream(
             process_iter, output_filter, classifier, renderer
         )]
     return asyncio.run(run())
