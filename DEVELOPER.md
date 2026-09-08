@@ -111,7 +111,7 @@ src/
     │   ├── nodes.py                            # The 4 async graph node functions — EXTEND
     │   ├── state.py                            # GraphState TypedDict + ChatUIInput / ChatUIFileInput Pydantic models — EXTEND
     │   ├── streaming.py                        # Frontend-agnostic pipeline: process_query_streaming + consume_stream (the single event consumer, owns the output guards), request unpacking — INFRASTRUCTURE
-    │   ├── ui_adapters.py                      # Chabo-ChatUI (LangServe) adapters only — chatui_adapter, chatui_file_adapter — INFRASTRUCTURE
+    │   ├── ui_adapters.py                      # Chabo-ChatUI (LangServe) adapter only — chatui_adapter (serves both routes) — INFRASTRUCTURE
     │   ├── renderers.py                        # Internal event stream → wire format, one class per frontend — EXTEND (add a frontend)
     │   │                                       # Optional customize: format_filters_footnote() controls filter display text
     │   └── telemetry.py                        # Extracts retriever telemetry from Document metadata for logging — INFRASTRUCTURE
@@ -207,13 +207,13 @@ POST /chatfed-ui-stream
       "final_answer"    → {"type": "sources",          "content": [...]}
       "end"             → {"type": "end"}
 
-  ← chatui_adapter assembles the final stream:
+  ← consume_stream (streaming.py) assembles the final stream via the renderer (renderers.py):
       - Yields token chunks to ChatUI as they arrive
       - Stores filters_footnote when filters_applied event received
-      - At "end": renders the filters footnote then the sources markdown (renderers.py)
+      - At "end": renders the filters footnote then the sources markdown
 ```
 
-For file uploads the flow is identical via `chatui_file_adapter` / `/chatfed-with-file-stream`. The only difference is `file_content` + `filename` are decoded from base64 and added to initial state, causing `ingest_node` to run instead of skip.
+For file uploads the flow is identical — `chatui_adapter` also serves `/chatfed-with-file-stream`. The only difference is `file_content` + `filename` are decoded from base64 and added to initial state, causing `ingest_node` to run instead of skip.
 
 ---
 

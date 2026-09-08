@@ -15,7 +15,7 @@ from components.retriever.retriever_orchestrator import (
 from components.generator.generator_orchestrator import Generator
 from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
-from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
+from components.orchestration.ui_adapters import chatui_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
 from components.api import build_openai_router
 from components.utils import getconfig, instance_config_dir, load_prompt_overrides
@@ -269,10 +269,11 @@ logger.info(
 # ChatUI-specific: Kept for the existing ChatUI deployments.
 # New frontends should use /v1/chat/completions above.
 
-# Inject compiled_graph and config into adapters (blocklist=None when the blocklist is disabled)
+# Inject compiled_graph and config into the adapter (blocklist=None when the blocklist is disabled).
+# Same underlying adapter for both routes below — file handling is a no-op when `files` is absent.
 text_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
                        blocklist=blocklist, blocklist_notice=BLOCKLIST_MESSAGE, classification_config=output_classification_config)
-file_adapter = partial(chatui_file_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
+file_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
                        blocklist=blocklist, blocklist_notice=BLOCKLIST_MESSAGE, classification_config=output_classification_config)
 
 # Text-only endpoint
