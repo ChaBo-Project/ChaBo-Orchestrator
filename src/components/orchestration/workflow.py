@@ -76,7 +76,7 @@ def build_workflow(
     workflow = StateGraph(GraphState)
 
     # Inject services into nodes
-    i_node = partial(ingest_node, config=config)
+    i_node = partial(ingest_node, app_config=config)
     r_node = partial(retrieve_node, retriever=retriever_instance)
     g_node = partial(generate_node_streaming, generator=generator_instance)
     f_node = partial(
