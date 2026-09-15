@@ -21,7 +21,7 @@ python main.py
 
 API will be available at `http://localhost:7860`. Interactive docs at `http://localhost:7860/docs`.
 
-> Configuration precedence: **kwargs → env vars → `params.cfg` → hardcoded defaults**
+> Configuration precedence: **kwargs → env vars → `INSTANCE_CONFIG_DIR/params.override.cfg` → `params.cfg` → hardcoded defaults**
 
 ---
 
@@ -35,6 +35,7 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │                                                                      │
 │  LLM provider · model · endpoints · Qdrant URL · collection         │
 │  top_k · reranker_top_k · filterable_fields · MAX_TURNS · chunking  │
+│  query_rewriter · input_guard · output_guard (each own llm_* config)│
 └──────────────────────────────────────────────────────────────────────┘
                                 ↓
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -63,7 +64,7 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │  orchestration/nodes.py       → define a new async node function     │
 │  orchestration/workflow.py    → wire it into the graph               │
 │  orchestration/state.py       → add new fields the node reads/writes │
-│  generator/generator_orchestrator.py → add a new LLM provider        │
+│  llm/llm_client.py            → add a new LLM provider               │
 └──────────────────────────────────────────────────────────────────────┘
                                 ↓
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -73,7 +74,9 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │  ingestor/upload_parquet.py            generator/sources.py          │
 │  generator/generator_orchestrator.py   orchestration/telemetry.py   │
 │  orchestration/streaming.py (core)     utils.py                      │
-│  api/ (openai_compat)                                                 │
+│  api/ (openai_compat)                  rewriter/db_context.py        │
+│  guardrails/ (input_guard, output_guard, output_classification,      │
+│               llm_guard)                                             │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -105,10 +108,19 @@ src/
 └── components/
     ├── utils.py                                # Shared: getconfig, get_config_value, build_conversation_context, HTTP helpers (_call_hf_endpoint, _acall_hf_endpoint)
     ├── api/                                     # Frontend-agnostic HTTP surface — INFRASTRUCTURE
-    │   └── openai_compat.py                    # /v1/chat/completions + /v1/models (OpenAI-compatible)
+    │   └── openai_compat.py                    # /v1/chat/completions + /v1/models (OpenAI-compatible), shares consume_stream/process_query_streaming with Chabo-ChatUI
+    ├── llm/
+    │   └── llm_client.py                       # LLMClient (provider-agnostic chat model wrapper) + build_llm_client() per-task factory — EXTEND (add a provider here)
+    ├── guardrails/                              # Input/output safety layer, both opt-in — INFRASTRUCTURE
+    │   ├── input_guard.py                      # InputGuardClient — wraps a guard backend in a timeout, fails open
+    │   ├── output_guard.py                     # OutputClassificationConfig + StreamingBlocklistFilter (streaming keyword blocklist)
+    │   ├── output_classification.py            # Windowed streaming classifier over a sliding window of generated text
+    │   └── llm_guard.py                        # Shared GuardVerdict model + LLMGuardBackend (mode=llm) / QwenGuardBackend (mode=classifier)
+    ├── rewriter/
+    │   └── db_context.py                       # DBContext — loads query-rewriter grounding (abstract/glossary) from instance.yaml — INFRASTRUCTURE
     ├── orchestration/
     │   ├── workflow.py                         # Builds and compiles the LangGraph state machine — EXTEND
-    │   ├── nodes.py                            # The 4 async graph node functions — EXTEND
+    │   ├── nodes.py                            # The 8 async graph node functions (ingest, extract_filters, retrieve, generate_streaming, rewrite_query, input_guard, guard_gate, blocked_response) — EXTEND
     │   ├── state.py                            # GraphState TypedDict + ChatUIInput / ChatUIFileInput Pydantic models — EXTEND
     │   ├── streaming.py                        # Frontend-agnostic pipeline: process_query_streaming + consume_stream (the single event consumer, owns the output guards), request unpacking — INFRASTRUCTURE
     │   ├── ui_adapters.py                      # Chabo-ChatUI (LangServe) adapter only — chatui_adapter (serves both routes) — INFRASTRUCTURE
@@ -119,7 +131,7 @@ src/
     │   ├── retriever_orchestrator.py           # ChaBoHFEndpointRetriever: Embed → Qdrant Search → Rerank — INFRASTRUCTURE
     │   └── filters.py                          # FILTER_VALUES, loaded from INSTANCE_CONFIG_DIR/instance.yaml — INFRASTRUCTURE (real values live in instance.yaml, not here)
     ├── generator/
-    │   ├── generator_orchestrator.py           # LLM provider wiring, config resolution, generate() / generate_streaming() — INFRASTRUCTURE
+    │   ├── generator_orchestrator.py           # Generator: wraps an LLMClient (llm/llm_client.py) + RAG metadata handling (citations), generate() / generate_streaming() — INFRASTRUCTURE
     │   ├── prompts.py                          # All LLM prompt content — MUST / OPTIONAL CUSTOMIZE
     │   │                                       # system_prompt → RAG behavior, citations, tone (must)
     │   │                                       # build_filter_extraction_messages() → filter extraction behavior (optional)
@@ -215,6 +227,9 @@ POST /chatfed-ui-stream
 
 For file uploads the flow is identical — `chatui_adapter` also serves `/chatfed-with-file-stream`. The only difference is `file_content` + `filename` are decoded from base64 and added to initial state, causing `ingest_node` to run instead of skip.
 
+`POST /v1/chat/completions` (`api/openai_compat.py`) runs the same pipeline. It differs only in
+request unpacking and renderer: `OpenAIChunkRenderer` instead of `MarkdownRenderer`.
+
 ---
 
 ## GraphState Field Reference
@@ -285,9 +300,10 @@ that's the intended signal to go configure `instance.yaml`, not a bug.
 
 ### Add a new LLM provider
 
-1. Add the LangChain provider import to `generator_orchestrator.py`
-2. Add the provider name and initialisation lambda to the `providers` dict in `Generator._get_chat_model()`
-3. Add any required API key to the env var table in `README.md`
+1. Add the LangChain provider import to `llm/llm_client.py`
+2. Add the provider name and initialisation lambda to the `providers` dict in `LLMClient._build_chat_model()`
+3. Add the provider's auth lookup to `get_auth_for_generator()` in `utils.py`
+4. Add any required API key to the env var table in `README.md`
 
 ### Add a new graph node
 
