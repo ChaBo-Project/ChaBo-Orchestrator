@@ -2,6 +2,7 @@
 tests/
 FeatureAndPR/
 docs/
+instance_config.example/
 
 __pycache__/
 *.pyc

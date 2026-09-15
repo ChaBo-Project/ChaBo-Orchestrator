@@ -261,7 +261,9 @@ Note: `db_context`'s `target_language` for cross-lingual rewriting is **not** pa
 key — it's configured separately via `[query_rewriter] target_language` in `params.cfg` (or
 `params.override.cfg`).
 
-Example layout:
+Example layout (working starting-point copies of all three files are in
+[`instance_config.example/`](instance_config.example/) — copy that directory, rename it, and
+edit it in place):
 
 ```
 instance_config/
