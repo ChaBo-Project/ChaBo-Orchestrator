@@ -1,0 +1,23 @@
+# Tier-2 safe content for the `<INSTANCE_NAME>` instance. All four top-level keys are
+# independent and optional — omit any you don't need. See chabo/README.md's
+# "Instance Configuration" section for the full contract and validation rules.
+
+# filters:
+#   # Required only if [metadata_filters] filterable_fields is set in
+#   # params.override.cfg — one entry per declared field, exact values as
+#   # stored in Qdrant payloads.
+#   <field>: [<value1>, <value2>]
+
+# db_context:
+#   # Grounds query rewriting ([query_rewriter] in params.override.cfg).
+#   abstract: ""
+#   glossary: []
+
+# blocklist:
+#   # Additions only, layered on top of the shipped blocklist.txt.
+#   en: []
+
+# instance_guidelines: |
+#   Optional per-deployment system prompt guidance, appended after the
+#   framework's base prompt. Can only ADD to the prompt, never override
+#   FRAMEWORK_VALUES (code-only, not configurable here).
