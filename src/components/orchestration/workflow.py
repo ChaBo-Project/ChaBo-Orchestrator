@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 def build_workflow(
     retriever_instance,
     generator_instance,
+    config,
     filterable_fields: Dict[str, str] = None,
     filter_values: Dict[str, list] = None,
     db_context: Optional["DBContext"] = None,
@@ -38,6 +39,7 @@ def build_workflow(
     Args:
         retriever_instance: Initialised ChaBoHFEndpointRetriever
         generator_instance: Initialised Generator
+        config: Loaded in main.py
         filterable_fields: Dict of {field_name: type} for LLM-based metadata filter extraction.
                            Pass {} or None to disable (extract_filters node becomes a pass-through).
         filter_values: Dict of {field_name: [valid_values]} for constrained LLM extraction.
@@ -74,6 +76,7 @@ def build_workflow(
     workflow = StateGraph(GraphState)
 
     # Inject services into nodes
+    i_node = partial(ingest_node, app_config=config)
     r_node = partial(retrieve_node, retriever=retriever_instance)
     g_node = partial(generate_node_streaming, generator=generator_instance)
     f_node = partial(
@@ -82,7 +85,7 @@ def build_workflow(
     )
 
     # Add nodes
-    workflow.add_node("ingest", ingest_node)
+    workflow.add_node("ingest", i_node)
     workflow.add_node("extract_filters", f_node)
     workflow.add_node("retrieve", r_node)
     workflow.add_node("generate", g_node)

@@ -167,10 +167,15 @@ async def generate_node_streaming(state: "GraphState", generator: "Generator", *
         writer({"event": "error", "data": {"error": str(e)}})
 
 
-async def ingest_node(state: 'GraphState') -> 'GraphState':
+async def ingest_node(state: 'GraphState', app_config) -> 'GraphState':
     """
     Node to process uploaded documents (PDF, DOCX) and extract chunked context.
     Only runs if file_content and filename are present in state.
+
+    app_config loaded in main.py. 
+    
+    NOTE: langgraph reserves special parameter names incl. `config`
+    > so we rename our config object
     """
     start_time = datetime.now()
 
@@ -187,7 +192,7 @@ async def ingest_node(state: 'GraphState') -> 'GraphState':
 
     try:
         # Process document and get chunked context
-        ingestor_context = process_document(file_content, filename)
+        ingestor_context = process_document(file_content, filename, app_config)
 
         duration = (datetime.now() - start_time).total_seconds()
 

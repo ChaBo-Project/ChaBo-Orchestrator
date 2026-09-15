@@ -331,8 +331,29 @@ The `metadata` dict inside `payload` is where filterable fields live (see Metada
 | `/` | GET | API information |
 | `/health` | GET | Health check |
 | `/docs` | GET | Interactive API documentation |
-| `/chatfed-ui-stream` | POST | Text query streaming (LangServe) |
-| `/chatfed-with-file-stream` | POST | File upload + query streaming (LangServe) |
+| `/v1/chat/completions` | POST | OpenAI-compatible chat, streaming or single response |
+| `/v1/models` | GET | OpenAI-compatible model listing (frontend discovery) |
+| `/chatfed-ui-stream` | POST | Text query streaming (LangServe — ChatUI) |
+| `/chatfed-with-file-stream` | POST | File upload + query streaming (LangServe — ChatUI) |
+
+### Connecting a frontend
+
+`/v1/chat/completions` is frontend-agnostic. Any UI (e.g. OpenWebUI, LibreChat, curl etc.) can talk to it with no bespoke connector. The LangServe routes are the Chabo-ChatUI connector (kept for the existing deployments). 
+
+Because generic UIs extract from files and pass raw text - so we just get them to send the filename and the text:
+`files: [{"name": "report.pdf", "content": "<extracted text>"}]`.
+
+```bash
+curl -N http://localhost:7860/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"chabo","stream":true,
+       "messages":[{"role":"user","content":"When is wheat sown?"}]}'
+```
+
+Per-UI setup, the deviations from OpenAI's API (sampling params ignored, no `usage`), and
+the OpenWebUI Pipe function are in documented in: 
+[`docs/frontend-integration.md`](docs/frontend-integration.md). Behaviour is tuned in the
+`[api]` section of `params.cfg`.
 
 
 ## Health Checks & Testing

@@ -15,8 +15,9 @@ from components.retriever.retriever_orchestrator import (
 from components.generator.generator_orchestrator import Generator
 from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
-from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
+from components.orchestration.ui_adapters import chatui_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
+from components.api import build_openai_router
 from components.utils import getconfig, instance_config_dir, load_prompt_overrides
 from components.retriever.filters import FILTER_VALUES, validate_filterable_fields
 from components.rewriter.db_context import DBContext, load_db_context_from_instance
@@ -30,6 +31,13 @@ from typing import Dict
 config = getconfig("params.cfg")
 MAX_TURNS = config.getint("conversation_history", "MAX_TURNS", fallback=3)
 MAX_CHARS = config.getint("conversation_history", "MAX_CHARS", fallback=8000)
+
+# --- Frontend-agnostic API surface ([api], all optional) ---
+# Model id advertised by GET /v1/models and echoed back in completions.
+API_MODEL_NAME = config.get("api", "model_name", fallback="chabo").strip() or "chabo"
+# Non-standard `citations` array on OpenAI-compatible responses
+# (sources are always rendered as markdown in the message body regardless).
+API_CITATIONS = config.getboolean("api", "openai_citations", fallback=True)
 
 # Parse filterable_fields: "field:type,field:type" → {"field": "type"}
 _filterable_fields_raw = config.get("metadata_filters", "filterable_fields", fallback="")
@@ -191,6 +199,7 @@ if BLOCKLIST_ENABLED:
 compiled_graph = build_workflow(
     retriever_instance,
     generator_instance,
+    config,
     filterable_fields=FILTERABLE_FIELDS,
     filter_values=FILTER_VALUES,
     db_context=db_context if REWRITER_ENABLED else None,
@@ -221,6 +230,8 @@ async def root():
         "message": "ChaBo RAG Orchestrator API",
         "endpoints": {
             "health": "/health",
+            "chat_completions": "/v1/chat/completions (OpenAI-compatible)",
+            "models": "/v1/models (OpenAI-compatible)",
             "chatfed-ui-stream": "/chatfed-ui-stream (LangServe)",
             "chatfed-with-file-stream": "/chatfed-with-file-stream (LangServe)",
         }
@@ -228,13 +239,41 @@ async def root():
 
 
 #----------------------------------------
-# LANGSERVE ROUTES
+# FRONTEND-AGNOSTIC ROUTES
 #----------------------------------------
+# /v1/chat/completions is standard for many frontend UIs (OpenWebUI, LibreChat).
+# Attachments are provided as already-extracted text (`files`), because generic
+# frontends do their own extraction and send raw text.
+app.include_router(
+    build_openai_router(
+        compiled_graph,
+        config=config,
+        model_name=API_MODEL_NAME,
+        max_turns=MAX_TURNS,
+        max_chars=MAX_CHARS,
+        blocklist=blocklist,
+        blocklist_notice=BLOCKLIST_MESSAGE,
+        classification_config=output_classification_config,
+        include_citations=API_CITATIONS,
+    )
+)
+logger.info(
+    f"OpenAI-compatible API enabled: /v1/chat/completions, /v1/models (model id "
+    f"'{API_MODEL_NAME}', citations={'on' if API_CITATIONS else 'off'})"
+)
 
-# Inject compiled_graph and config into adapters (blocklist=None when the blocklist is disabled)
+
+#----------------------------------------
+# LANGSERVE ROUTES (ChatUI)
+#----------------------------------------
+# ChatUI-specific: Kept for the existing ChatUI deployments.
+# New frontends should use /v1/chat/completions above.
+
+# Inject compiled_graph and config into the adapter (blocklist=None when the blocklist is disabled).
+# Same underlying adapter for both routes below — file handling is a no-op when `files` is absent.
 text_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
                        blocklist=blocklist, blocklist_notice=BLOCKLIST_MESSAGE, classification_config=output_classification_config)
-file_adapter = partial(chatui_file_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
+file_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS,
                        blocklist=blocklist, blocklist_notice=BLOCKLIST_MESSAGE, classification_config=output_classification_config)
 
 # Text-only endpoint

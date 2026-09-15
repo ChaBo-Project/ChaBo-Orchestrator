@@ -191,18 +191,20 @@ def create_sources_list(
     cited_sources: List[Dict[str, Any]],
     title_metadata_fields: List[str],
     link_metadata_field: str
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Optional[str]]]:
     """
-    Create sources list for ChatUI format using configuration for title and link fields.
+    Create the cited-sources list, using configuration for title and link fields.
+
+    Frontend-agnostic in that it won't cause an error - but no guarantees for UIs other than Chabo-ChatUI
 
     Args:
         cited_sources: List of standardized dictionaries that were cited.
-        title_metadata_fields: List of metadata keys (e.g., ['document_type', 'decision_number']) 
+        title_metadata_fields: List of metadata keys (e.g., ['document_type', 'decision_number'])
                                to use to build the source title.
         link_metadata_field: The single metadata key (e.g., 'document_url') to use for the source link (URL).
     """
     sources = []
-    logger.info("creating sources list for ChatUI")
+    logger.info("creating cited sources list")
     logger.debug(f"Raw Cited sources: {cited_sources}")
 
     for result in cited_sources:
@@ -220,11 +222,11 @@ def create_sources_list(
         # Create a descriptive title
         title = " - ".join(title_parts) if title_parts else f"Source {citation_num}"
 
-        # 2. Extract Link using configured field (use 'doc://#' as fallback for empty/missing)
-        # ChatUI requires URLs to match doc://, http://, or https:// schemes
+        # 2. Extract Link using configured field. No link (or a bare '#') stays None —
+        # the renderer decides how to present a source that has no URL.
         link = all_meta.get(link_metadata_field)
         if not link or link == '#':
-            link = 'doc://#'  # Use doc:// scheme for placeholder links
+            link = None
 
         sources.append({
             "uri": link,

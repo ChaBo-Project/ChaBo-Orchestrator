@@ -1,9 +1,10 @@
 """
 Document Ingestor Module
-Processes PDF and DOCX files, extracting text and chunking for RAG pipelines.
+Processes PDF, DOCX and plain-text (.txt/.md) files, extracting text and chunking for RAG
+pipelines.
 
 TO DO:
-- Possible support for additional file types (e.g., TXT, HTML)
+- Possible support for additional file types (e.g., HTML)
 - Review rate limits / context window size. The current inference endpoint is limited.
 - Different context strategies
 > Currently when a file is added, the query just goes to the retriever.
@@ -21,8 +22,6 @@ from typing import Tuple, Dict, Any
 import PyPDF2
 from docx import Document as DocxDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-from components.utils import getconfig
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +59,24 @@ def extract_text_from_docx_bytes(file_content: bytes) -> Tuple[str, Dict[str, An
     except Exception as e:
         logger.error(f"DOCX extraction error: {str(e)}")
         raise Exception(f"Failed to extract text from DOCX: {str(e)}")
+
+
+def extract_text_from_plain_bytes(file_content: bytes) -> Tuple[str, Dict[str, Any]]:
+    """
+    Decode plain-text files (.txt / .md).
+
+    Kept for the ChatUI route, which can upload a .txt/.md directly. Frontends that run
+    their own extraction (OpenWebUI, LibreChat) send text on the chat request instead and
+    reach `process_text()` without passing through here.
+    
+    UTF-8 first, latin-1 as a lossless byte-preserving fallback.
+    """
+    try:
+        text = file_content.decode("utf-8")
+    except UnicodeDecodeError:
+        text = file_content.decode("latin-1")
+        logger.warning("Plain-text file was not valid UTF-8; decoded as latin-1")
+    return text, {"total_chars": len(text)}
 
 
 def clean_and_chunk_text(text: str, config) -> str:
@@ -100,13 +117,14 @@ def clean_and_chunk_text(text: str, config) -> str:
     return "\n\n".join(context_parts)
 
 
-def process_document(file_content: bytes, filename: str) -> str:
+def process_document(file_content: bytes, filename: str, config) -> str:
     """
     Main document processing function - processes file and returns chunked context.
 
     Args:
         file_content: Raw bytes of the uploaded file
         filename: Name of the file (used to determine file type)
+        config: Loaded in main.py
 
     Returns:
         Formatted chunked context string ready for RAG pipeline
@@ -116,9 +134,6 @@ def process_document(file_content: bytes, filename: str) -> str:
         Exception: If processing fails
     """
     try:
-        # Load config
-        config = getconfig("params.cfg")
-
         # Extract text based on file type (in memory)
         file_extension = os.path.splitext(filename)[1].lower()
 
@@ -126,8 +141,12 @@ def process_document(file_content: bytes, filename: str) -> str:
             text, extraction_metadata = extract_text_from_pdf_bytes(file_content)
         elif file_extension == '.docx':
             text, extraction_metadata = extract_text_from_docx_bytes(file_content)
+        elif file_extension in ('.txt', '.md'):
+            text, extraction_metadata = extract_text_from_plain_bytes(file_content)
         else:
-            raise ValueError(f"Unsupported file type: {file_extension}")
+            raise ValueError(
+                f"Unsupported file type: {file_extension} (supported: .pdf, .docx, .txt, .md)"
+            )
 
         # Clean and chunk text
         context = clean_and_chunk_text(text, config)
@@ -139,6 +158,29 @@ def process_document(file_content: bytes, filename: str) -> str:
 
         return context
 
+    except ValueError:
+        logger.error(f"Document processing failed for {filename}: unsupported file type")
+        raise
     except Exception as e:
         logger.error(f"Document processing failed for {filename}: {str(e)}")
         raise Exception(f"Processing failed: {str(e)}")
+
+
+def process_text(text: str, filename: str, config) -> str:
+    """
+    Chunk already-extracted text into the same context format as process_document().
+
+    Generic chat frontends extract text from files and pass raw text,
+    so this function applies cleaning, chunking, and the max_chunks cap only.
+
+    Args:
+        text: Plain text of the attachment
+        filename: Name of the file, used for logging and citation labelling only
+        config: Loaded in main.py
+
+    Returns:
+        Formatted chunked context string ready for RAG pipeline
+    """
+    context = clean_and_chunk_text(text, config)
+    logger.info(f"Successfully processed text attachment {filename}: {len(text)} characters")
+    return context
