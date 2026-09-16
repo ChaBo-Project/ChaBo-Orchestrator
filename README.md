@@ -4,24 +4,45 @@ A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, Lang
 
 ## Architecture
 
-```
-┌─────────────┐     ┌────────────────────────────────────────────────────────┐
-│   ChatUI    │────▶│                        ChaBo                           │
-│  (Frontend) │     │  ┌─────────┐   ┌──────────────┐   ┌───────────────┐    │
-└─────────────┘     │  │ Embed   │──▶│ Smart Search │──▶│    Rerank     │    │
-                    │  │ (HF)    │   │   (Qdrant)   │   │    (HF)       │    │
-                    │  └─────────┘   └──────▲───────┘   └───────┬───────┘    │
-                    │                       │                   │            │
-                    │               ┌───────┴──────┐   ┌───────▼────────┐    │
-                    │               │   Extract    │   │    Generate    │    │
-                    │               │  Filters*    │   │  (Multi-LLM)   │    │
-                    │               └──────────────┘   └────────────────┘    │
-                    └────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Frontends["Frontends"]
+        UI1["ChaBo-ChatUI (LangServe)<br/>/chatfed-ui-stream<br/>/chatfed-with-file-stream"]
+        UI2["Any UI — curl, OpenWebUI, LibreChat, ...<br/>/v1/chat/completions (OpenAI-compatible)"]
+    end
+
+    subgraph ChaBo["ChaBo"]
+        direction LR
+        ingest(["Ingest"])
+        rewrite{{"Rewrite*"}}
+        extract{{"Extract Filters*"}}
+        guard{{"Input Guard*"}}
+        gate{{"Gate"}}
+        blocked["Blocked Response"]
+        embed["Embed (HF)"]
+        search[("Smart Search (Qdrant)")]
+        rerank["Rerank (HF)"]
+        generate["Generate (Multi-LLM)"]
+        outguard{{"Output Guard*"}}
+
+        ingest --> rewrite --> extract --> gate
+        ingest -. "parallel" .-> guard --> gate
+        gate -- unsafe --> blocked
+        gate -- safe --> embed --> search --> rerank --> generate --> outguard
+    end
+
+    UI1 --> ingest
+    UI2 --> ingest
+    blocked --> Response(("Streamed Response"))
+    outguard --> Response
 ```
 
-**Pipeline:** Query → [Input Guard*] → [Rewrite*] → Extract Filters* → Smart Search → Rerank → Generate → [Output Guard*] (with citations)
+**Pipeline:** Query → [Rewrite*] → Extract Filters* → Smart Search → Rerank → Generate → [Output Guard*]
+(with citations), with [Input Guard*] running as a parallel branch off the initial query that
+gates retrieval on a safe verdict.
 
 > Stages marked `*` are optional and configured in `params.cfg`; all are off unless enabled.
+> Both frontends are served by the same graph — see [API Endpoints](#api-endpoints) below.
 
 > **Smart Search** applies LLM-extracted metadata filters to narrow Qdrant results before reranking. Filters are pulled from the current query, with conversation history as fallback. When filters are applied, ChatUI displays a footnote at the end of each response (e.g. *🔍 Searched within: category: news · lang: en*) — including a note if the AND-safeguard fired and narrowed the filter to the priority field. Activated only when `filterable_fields` is configured under `[metadata_filters]` in `params.cfg` — omit or leave empty for standard unfiltered search.
 
