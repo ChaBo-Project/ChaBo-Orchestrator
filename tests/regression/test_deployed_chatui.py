@@ -12,10 +12,9 @@ from huggingface_hub import get_token
 
 class DeployedChatUITests(unittest.TestCase):
     def stream_answer(self, messages, expected_source):
-        base_url = os.environ.get(
-            "REGRESSION_ORCHESTRATOR_URL",
-            "https://giz-chabo-regression-orchestrator.hf.space",
-        ).rstrip("/")
+        base_url = os.environ.get("REGRESSION_ORCHESTRATOR_URL", "").strip()
+        self.assertTrue(base_url, "REGRESSION_ORCHESTRATOR_URL is required")
+        base_url = base_url.rstrip("/")
         token = os.environ.get("HF_TOKEN") or get_token()
         self.assertTrue(token, "HF_TOKEN or a saved Hugging Face login is required")
 
@@ -127,10 +126,9 @@ class DeployedChatUITests(unittest.TestCase):
         )
 
     def test_invalid_request_is_rejected(self):
-        base_url = os.environ.get(
-            "REGRESSION_ORCHESTRATOR_URL",
-            "https://giz-chabo-regression-orchestrator.hf.space",
-        ).rstrip("/")
+        base_url = os.environ.get("REGRESSION_ORCHESTRATOR_URL", "").strip()
+        self.assertTrue(base_url, "REGRESSION_ORCHESTRATOR_URL is required")
+        base_url = base_url.rstrip("/")
         token = os.environ.get("HF_TOKEN") or get_token()
         self.assertTrue(token, "Hugging Face authentication is required")
 
@@ -167,10 +165,9 @@ class DeployedChatUITests(unittest.TestCase):
         )
 
     def test_private_space_rejects_missing_and_invalid_tokens(self):
-        base_url = os.environ.get(
-            "REGRESSION_ORCHESTRATOR_URL",
-            "https://giz-chabo-regression-orchestrator.hf.space",
-        ).rstrip("/")
+        base_url = os.environ.get("REGRESSION_ORCHESTRATOR_URL", "").strip()
+        self.assertTrue(base_url, "REGRESSION_ORCHESTRATOR_URL is required")
+        base_url = base_url.rstrip("/")
         token = os.environ.get("HF_TOKEN") or get_token()
         self.assertTrue(token, "Hugging Face authentication is required")
 

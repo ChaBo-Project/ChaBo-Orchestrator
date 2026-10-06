@@ -13,21 +13,32 @@ class DeployedRetrievalTests(unittest.TestCase):
         token = os.environ.get("HF_TOKEN") or get_token()
         self.assertTrue(token, "Hugging Face authentication is required")
 
+        dataset_id = os.environ.get("REGRESSION_DATASET_ID", "").strip()
+        self.assertTrue(dataset_id, "REGRESSION_DATASET_ID is required")
+
+        dataset_revision = os.environ.get(
+            "REGRESSION_DATASET_REVISION", ""
+        ).strip()
+        self.assertRegex(
+            dataset_revision,
+            r"^[0-9a-f]{40}$",
+            "REGRESSION_DATASET_REVISION must be a full dataset commit SHA",
+        )
+
         dataset_path = hf_hub_download(
-            repo_id="GIZ/chabo-regression-embeddings",
+            repo_id=dataset_id,
             repo_type="dataset",
             filename="train.json",
-            revision="c05ec1ab390c029ebc100314a5359ed5fdf738bd",
+            revision=dataset_revision,
             token=token,
         )
         with open(dataset_path, encoding="utf-8") as dataset_file:
             documents = json.load(dataset_file)
 
         self.assertEqual(len(documents), 3)
-        base_url = os.environ.get(
-            "REGRESSION_QDRANT_URL",
-            "https://giz-chabo-regression-qdrant.hf.space",
-        ).rstrip("/")
+        base_url = os.environ.get("REGRESSION_QDRANT_URL", "").strip()
+        self.assertTrue(base_url, "REGRESSION_QDRANT_URL is required")
+        base_url = base_url.rstrip("/")
         collection = os.environ.get(
             "REGRESSION_COLLECTION", "chabo-regression-v1"
         )
