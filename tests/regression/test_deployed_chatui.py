@@ -10,7 +10,7 @@ from huggingface_hub import get_token
 
 
 class DeployedChatUITests(unittest.TestCase):
-    def test_stream_returns_answer_citation_and_completion(self):
+    def stream_answer(self, messages, expected_source):
         base_url = os.environ.get(
             "REGRESSION_ORCHESTRATOR_URL",
             "https://giz-chabo-regression-orchestrator.hf.space",
@@ -18,17 +18,7 @@ class DeployedChatUITests(unittest.TestCase):
         token = os.environ.get("HF_TOKEN") or get_token()
         self.assertTrue(token, "HF_TOKEN or a saved Hugging Face login is required")
 
-        body = {
-            "input": {
-                "messages": [{
-                    "role": "user",
-                    "content": (
-                        "What is the training grant per participant in the "
-                        "Orion Training Programme, and when do applications close?"
-                    ),
-                }]
-            }
-        }
+        body = {"input": {"messages": messages}}
         request = Request(
             base_url + "/chatfed-ui-stream/stream",
             data=json.dumps(body).encode("utf-8"),
@@ -69,9 +59,7 @@ class DeployedChatUITests(unittest.TestCase):
         self.assertEqual(event_name, "message", "An SSE frame was incomplete")
         self.assertNotIn("error", [name for name, _ in events])
         self.assertEqual(events[-1][0], "end", "Missing stream completion")
-        self.assertEqual(
-            sum(name == "end" for name, _ in events), 1
-        )
+        self.assertEqual(sum(name == "end" for name, _ in events), 1)
 
         chunks = []
         for name, data in events:
@@ -97,8 +85,45 @@ class DeployedChatUITests(unittest.TestCase):
                 f"Full response:\n{answer}"
             ),
         )
-        self.assertIn("reg-orion-grant.txt", sources)
+        self.assertIn(expected_source, sources)
+        return answer
 
+    def test_stream_returns_answer_citation_and_completion(self):
+        self.stream_answer(
+            [{
+                "role": "user",
+                "content": (
+                    "What is the training grant per participant in the "
+                    "Orion Training Programme, and when do applications close?"
+                ),
+            }],
+            "reg-orion-grant.txt",
+        )
+
+    def test_follow_up_with_conversation_history(self):
+        question = (
+            "What is the training grant per participant in the "
+            "Orion Training Programme, and when do applications close?"
+        )
+        first_answer = self.stream_answer(
+            [{"role": "user", "content": question}],
+            "reg-orion-grant.txt",
+        )
+
+        self.stream_answer(
+            [
+                {"role": "user", "content": question},
+                {"role": "assistant", "content": first_answer},
+                {
+                    "role": "user",
+                    "content": (
+                        "Where is its induction session held, "
+                        "and what must participants bring?"
+                    ),
+                },
+            ],
+            "reg-orion-induction.txt",
+        )
 
 if __name__ == "__main__":
     unittest.main()
