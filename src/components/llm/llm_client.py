@@ -6,6 +6,7 @@ plus the per-task client factory.
 import logging
 import os
 from typing import AsyncGenerator, Optional
+from urllib.parse import urlparse
 
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -16,6 +17,11 @@ from langchain_core.language_models import BaseChatModel  # for typing
 from ..utils import get_auth_for_generator
 
 logger = logging.getLogger(__name__)
+
+
+def _is_http_url(value: Optional[str]) -> bool:
+    parsed = urlparse((value or "").strip())
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
 class LLMClient:
@@ -34,6 +40,9 @@ class LLMClient:
         auth_config: Optional[dict] = None,
         streaming: bool = True,
     ):
+        # Without an endpoint, ChatOpenAI defaults to api.openai.com and would send the Azure key there.
+        if provider == "azure" and not _is_http_url(azure_endpoint):
+            raise ValueError(f"provider 'azure' requires azure_endpoint to be an http(s) URL, got {azure_endpoint!r}.")
         self.provider = provider
         self.model = model
         self.max_tokens = max_tokens
@@ -191,6 +200,11 @@ def build_llm_client(config, task: str) -> "LLMClient":
 
     resolved["max_tokens"] = int(resolved["max_tokens"])
     resolved["temperature"] = float(resolved["temperature"])
+    if resolved["provider"] == "azure" and not _is_http_url(resolved["azure_endpoint"]):
+        raise ValueError(
+            f"LLM config: [{section}] {key_prefix}azure_endpoint (or env {env_prefix}AZURE_ENDPOINT) "
+            f"must be an http(s) URL when provider = azure, got {resolved['azure_endpoint']!r}."
+        )
 
     # Resolve auth eagerly so a misconfigured task provider fails fast at construction.
     auth_config = get_auth_for_generator(resolved["provider"])

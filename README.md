@@ -218,7 +218,9 @@ Pass API keys as environment variables at runtime:
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key |
 | `COHERE_API_KEY` | If using Cohere | Cohere API key |
-| `AZURE_API_KEY` | If using Azure OpenAI | Azure OpenAI API key |
+| `AZURE_API_KEY` | If using Azure OpenAI | Azure OpenAI API key (shared by all tasks) |
+
+**Azure:** every task using `provider = azure` needs its own endpoint: `[generator] AZURE_ENDPOINT` and `llm_azure_endpoint` in `[metadata_filters]` / `[query_rewriter]` / `[input_guard]` / `[output_guard]` (env: `GENERATOR_AZURE_ENDPOINT`, `FILTER_EXTRACTION_LLM_AZURE_ENDPOINT`, `QUERY_REWRITE_LLM_AZURE_ENDPOINT`, `INPUT_GUARD_LLM_AZURE_ENDPOINT`, `OUTPUT_CLASSIFICATION_LLM_AZURE_ENDPOINT`). It must be a full `https://` URL; ChaBo refuses to start otherwise, to avoid requests (and the Azure key) going to api.openai.com, the OpenAI SDK's default.
 
 #### Build and Run
 
