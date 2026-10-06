@@ -109,7 +109,7 @@ class Generator:
 
     # # --- Main Generation Methods (Public Interface) ---
 
-    async def generate(self, query: str, context: Union[str, List[Dict[str, Any]], None], chatui_format: bool = False, conversation_context: str = None) -> Union[str, Dict[str, Any]]:
+    async def generate(self, query: str, context: Union[str, List[Dict[str, Any]], None], chatui_format: bool = False, conversation_context: str = None, query_interpretation: str = None) -> Union[str, Dict[str, Any]]:
         """Generate an answer to a query using provided context (non-streaming)"""
         if not query.strip():
             error_msg = "Query cannot be empty"
@@ -122,7 +122,7 @@ class Generator:
                metadata_fields_to_include=self.context_metadata_fields)
 
             # 2. Build Messages (with system prompt and optional conversation history)
-            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context)
+            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context, query_interpretation)
 
 
 
@@ -146,7 +146,7 @@ class Generator:
             error_msg = str(e)
             return {"error": error_msg} if chatui_format else f"Error: {error_msg}"
 
-    async def generate_streaming(self, query: str, context: Union[str, List[Dict[str, Any]], None], chatui_format: bool = False, conversation_context: str = None) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
+    async def generate_streaming(self, query: str, context: Union[str, List[Dict[str, Any]], None], chatui_format: bool = False, conversation_context: str = None, query_interpretation: str = None) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
         """Generate a streaming answer to a query using provided context through RAG"""
         if not query.strip():
             error_msg = "Query cannot be empty"
@@ -166,7 +166,7 @@ class Generator:
                             metadata_fields_to_include =self.context_metadata_fields)
 
             # 2. Build Messages (with system prompt and optional conversation history)
-            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context)
+            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context, query_interpretation)
 
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""
