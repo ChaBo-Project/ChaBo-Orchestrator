@@ -115,6 +115,12 @@ async def generate_node_streaming(state: "GraphState", generator: "Generator", *
     start_time = datetime.now()
 
     query = state.get("query")
+    # Pass the rewrite alongside the original, only if the rewriter actually changed it.
+    query_rewrite = state.get("query_rewrite")
+    query_interpretation = None
+    if (query_rewrite and not state.get("rewriter_fallback_used")
+            and query_rewrite.strip() != (query or "").strip()):
+        query_interpretation = query_rewrite
     raw_docs = state.get("raw_documents", [])
     metadata = state.get("metadata", {})
     ingestor_context = state.get("ingestor_context")
@@ -137,7 +143,8 @@ async def generate_node_streaming(state: "GraphState", generator: "Generator", *
             query=query,
             context=raw_docs,
             chatui_format=True,
-            conversation_context=conversation_context
+            conversation_context=conversation_context,
+            query_interpretation=query_interpretation,
         ):
             # Track content to calculate metadata (length) at the end
             if event.get("event") == "data":

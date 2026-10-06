@@ -94,6 +94,17 @@ FOLLOW-UP QUESTIONS (OPTIONAL):
 - Keep it concise and directly related to the available context.
 """
 
+# Shown with the original question when the query rewriter produced a usable rewrite.
+QUERY_INTERPRETATION_NOTE = (
+    "For document search, the user question was interpreted as shown below. Use this "
+    "interpretation to resolve references (e.g. pronouns) and domain terms or abbreviations; "
+    "its expansions come from the knowledge base and take precedence over your own assumptions. "
+    "It is not the question itself: answer the USER QUESTION provided below, keeping its intent, scope and language."
+)
+
+# Repeated as the last line of the prompt to keep the answer in the query's language.
+LANGUAGE_NUDGE = "Answer in the same language as the USER QUESTION above."
+
 
 def load_instance_guidelines() -> str:
     """
@@ -312,7 +323,8 @@ def build_query_rewrite_messages(
     return [system_msg, context_msg]
 
 
-def build_messages(system_prompt: str, question: str, context: str, conversation_context: str = None) -> list:
+def build_messages(system_prompt: str, question: str, context: str, conversation_context: str = None,
+                   query_interpretation: str = None) -> list:
     """
     Build messages for LLM call with optional conversation history.
 
@@ -321,16 +333,21 @@ def build_messages(system_prompt: str, question: str, context: str, conversation
         question: The current user question
         context: Retrieved document context
         conversation_context: Optional conversation history (formatted as "USER: ...\nASSISTANT: ...")
+        query_interpretation: Optional rewritten query (see QUERY_INTERPRETATION_NOTE)
 
     Returns:
         List of LangChain messages
     """
     system_content = system_prompt
 
-    # Build user message with optional conversation history
+    blocks = []
     if conversation_context:
-        user_content = f"### CONVERSATION HISTORY\n{conversation_context}\n\n### CONTEXT\n{context}\n\n### USER QUESTION\n{question}"
-    else:
-        user_content = f"### CONTEXT\n{context}\n\n### USER QUESTION\n{question}"
+        blocks.append(f"### CONVERSATION HISTORY\n{conversation_context}")
+    blocks.append(f"### CONTEXT\n{context}")
+    if query_interpretation:
+        blocks.append(f"### QUESTION INTERPRETATION\n{QUERY_INTERPRETATION_NOTE}\n{query_interpretation}")
+    blocks.append(f"### USER QUESTION\n{question}")
+    blocks.append(LANGUAGE_NUDGE)
+    user_content = "\n\n".join(blocks)
 
     return [SystemMessage(content=system_content), HumanMessage(content=user_content)]
