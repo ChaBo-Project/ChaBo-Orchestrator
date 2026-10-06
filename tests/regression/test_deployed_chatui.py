@@ -5,6 +5,7 @@ import os
 import re
 import unittest
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 from huggingface_hub import get_token
 
@@ -124,6 +125,82 @@ class DeployedChatUITests(unittest.TestCase):
             ],
             "reg-orion-induction.txt",
         )
+
+    def test_invalid_request_is_rejected(self):
+        base_url = os.environ.get(
+            "REGRESSION_ORCHESTRATOR_URL",
+            "https://giz-chabo-regression-orchestrator.hf.space",
+        ).rstrip("/")
+        token = os.environ.get("HF_TOKEN") or get_token()
+        self.assertTrue(token, "Hugging Face authentication is required")
+
+        # Each message requires a content field.
+        body = {"input": {"messages": [{"role": "user"}]}}
+        request = Request(
+            base_url + "/chatfed-ui-stream/stream",
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        with self.assertRaises(HTTPError) as caught:
+            with urlopen(request, timeout=60):
+                pass
+
+        with caught.exception as error:
+            self.assertEqual(error.code, 422)
+            self.assertTrue(
+                error.headers.get("Content-Type", "").startswith(
+                    "application/json"
+                )
+            )
+            response = json.load(error)
+
+        self.assertIsInstance(response.get("detail"), list)
+        self.assertTrue(response["detail"], "Missing validation error details")
+        self.assertTrue(
+            any("content" in item.get("loc", []) for item in response["detail"]),
+            f"Expected an error about missing content: {response}",
+        )
+
+    def test_private_space_rejects_missing_and_invalid_tokens(self):
+        base_url = os.environ.get(
+            "REGRESSION_ORCHESTRATOR_URL",
+            "https://giz-chabo-regression-orchestrator.hf.space",
+        ).rstrip("/")
+        token = os.environ.get("HF_TOKEN") or get_token()
+        self.assertTrue(token, "Hugging Face authentication is required")
+
+        url = base_url + "/chatfed-ui-stream/input_schema"
+
+        # Confirm the route exists and is accessible with valid authentication.
+        request = Request(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urlopen(request, timeout=60) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.load(response)["title"], "ChatUIInput")
+
+        cases = {
+            "missing_token": {},
+            "invalid_token": {
+                "Authorization": "Bearer invalid-regression-token"
+            },
+        }
+        for name, headers in cases.items():
+            with self.subTest(authentication=name):
+                request = Request(url, headers=headers)
+                with self.assertRaises(HTTPError) as caught:
+                    with urlopen(request, timeout=60):
+                        pass
+
+                with caught.exception as error:
+                    # Private resources may be concealed with HTTP 404.
+                    self.assertIn(error.code, (401, 403, 404))
 
 if __name__ == "__main__":
     unittest.main()
