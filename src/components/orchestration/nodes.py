@@ -114,7 +114,7 @@ async def generate_node_streaming(state: "GraphState", generator: "Generator", *
     """
     start_time = datetime.now()
 
-    query = state.get("query")
+    query = state.get("query_rewrite") or state.get("query", "")
     raw_docs = state.get("raw_documents", [])
     metadata = state.get("metadata", {})
     ingestor_context = state.get("ingestor_context")
