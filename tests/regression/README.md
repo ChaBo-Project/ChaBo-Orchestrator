@@ -8,7 +8,7 @@ the required check for pull requests targeting main.
 
 ## Current coverage
 
-Five unittest tests cover:
+Eleven unittest tests cover:
 
 - A basic question returning a non-empty streamed answer.
 - SSE content type, JSON string chunks, complete frames and one final end event.
@@ -18,9 +18,14 @@ Five unittest tests cover:
 - Private Orchestrator Space access with valid, missing and invalid credentials.
 - Retrieval of each synthetic document using its own stored embedding vector,
   checking returned document metadata and text.
+- OpenAI-compatible model listing.
+- Non-streaming chat completion structure and source references.
+- OpenAI streaming frames, consistent response identifiers and completion markers.
+- Rejection of empty messages and conversations without a user turn.
+- Conversation follow-ups through the OpenAI-compatible API.
 
-The streaming and conversation tests call the Orchestrator's
-`/chatfed-ui-stream/stream` endpoint directly. They do not automate the
+The streaming and conversation tests call the Orchestrator's LangServe
+and OpenAI-compatible endpoints directly. They do not automate the
 ChatUI browser interface.
 
 The retrieval test calls the Qdrant Space's Gradio API. It checks indexed
@@ -127,8 +132,8 @@ The workflow:
 5. Runs the regression tests from the fixed test revision.
 6. Checks that the Space commit remained unchanged during testing.
 
-The fixed test revision is currently
-`9e2b9c671280b547fb2131cf361d8e1bb958eaab`.
+The private workflow pins its test checkout to a reviewed full commit SHA.
+Update that pin when adopting a new version of the regression tests.
 
 Deployment uses the private repository's `HF_TOKEN`. The test job uses
 `HF_REGRESSION_READ_TOKEN`, exposed to the tests as `HF_TOKEN`.
@@ -157,8 +162,8 @@ the defect is fixed. Keep the citation assertion unchanged.
 - A required regression status for pull requests targeting main.
 - Automated end-to-end conversation through the supported ChatUI.
 - Existing configuration and selected optional-feature settings.
-- Broader API coverage, including non-streaming responses.
-- Grouped citation markers and exact citation-to-document mapping.
+- File uploads and additional API validation cases.
+- Grouped citations on the LangServe route and exact citation-to-document mapping.
 - Verification of immutable companion deployment revisions.
 
 Add relevant regression coverage when introducing features or fixing bugs.
