@@ -3,6 +3,13 @@ ChaBo RAG Orchestrator - Production Entry Point
 """
 import os
 import logging
+from components.logging_setup import (
+    configure_logging,
+    ExecutionLoggingMiddleware,
+)
+
+configure_logging()
+
 from fastapi import FastAPI
 from langserve import add_routes
 from langchain_core.runnables import RunnableLambda
@@ -53,7 +60,6 @@ for _item in _filterable_fields_raw.split(","):
 if FILTERABLE_FIELDS:
     validate_filterable_fields(FILTERABLE_FIELDS)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 _instance_dir = instance_config_dir()
@@ -219,6 +225,7 @@ compiled_graph = build_workflow(
 #----------------------------------------
 
 app = FastAPI(title="ChaBo RAG Orchestrator", version="1.0.0")
+app.add_middleware(ExecutionLoggingMiddleware)
 
 @app.get("/health")
 async def health_check():
