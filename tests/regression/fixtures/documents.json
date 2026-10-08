@@ -1,0 +1,41 @@
+[
+  {
+    "id": 1001,
+    "payload": {
+      "text": "The fictional Orion Training Programme provides a training grant of 420 euros per participant. Applications close on 15 November 2030. Applicants must complete the Orion registration form.",
+      "metadata": {
+        "document_id": "reg-orion-grant",
+        "filename": "reg-orion-grant.txt",
+        "page": 1,
+        "project_id": "REG-001",
+        "document_type": "programme guide"
+      }
+    }
+  },
+  {
+    "id": 1002,
+    "payload": {
+      "text": "The fictional Orion Training Programme holds its induction session at the Blue Cedar Centre. Participants must bring their registration confirmation. The session starts at 09:30.",
+      "metadata": {
+        "document_id": "reg-orion-induction",
+        "filename": "reg-orion-induction.txt",
+        "page": 1,
+        "project_id": "REG-001",
+        "document_type": "induction guide"
+      }
+    }
+  },
+  {
+    "id": 1003,
+    "payload": {
+      "text": "The fictional Vega Gardening Programme provides a gardening grant of 175 euros per participant. Applications close on 20 February 2031. Its workshop takes place at the Silver Birch Centre.",
+      "metadata": {
+        "document_id": "reg-vega-grant",
+        "filename": "reg-vega-grant.txt",
+        "page": 1,
+        "project_id": "REG-002",
+        "document_type": "programme guide"
+      }
+    }
+  }
+]
