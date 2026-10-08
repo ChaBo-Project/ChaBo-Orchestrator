@@ -8,7 +8,7 @@ the required check for pull requests targeting main.
 
 ## Current coverage
 
-Eleven unittest tests cover:
+Thirteen unittest tests cover:
 
 - A basic question returning a non-empty streamed answer.
 - SSE content type, JSON string chunks, complete frames and one final end event.
@@ -23,6 +23,9 @@ Eleven unittest tests cover:
 - OpenAI streaming frames, consistent response identifiers and completion markers.
 - Rejection of empty messages and conversations without a user turn.
 - Conversation follow-ups through the OpenAI-compatible API.
+- TXT attachments through LangServe, checking the answer and cited filename.
+- Extracted-text attachments through the OpenAI-compatible API,
+  checking the answer and cited filename.
 
 The streaming and conversation tests call the Orchestrator's LangServe
 and OpenAI-compatible endpoints directly. They do not automate the
@@ -162,7 +165,9 @@ the defect is fixed. Keep the citation assertion unchanged.
 - A required regression status for pull requests targeting main.
 - Automated end-to-end conversation through the supported ChatUI.
 - Existing configuration and selected optional-feature settings.
-- File uploads and additional API validation cases.
+- PDF, DOCX and Markdown uploads.
+- Invalid attachments and attachment isolation between requests.
+- Additional API validation cases.
 - Grouped citations on the LangServe route and exact citation-to-document mapping.
 - Verification of immutable companion deployment revisions.
 
