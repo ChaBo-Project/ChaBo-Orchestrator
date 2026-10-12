@@ -530,18 +530,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 logger.debug(f"Async Gradio Qdrant search: collection={self.qdrant_collection}, k={self.top_k}")
                 applied_filter = filters
                 narrowed = False
-                loop = asyncio.get_running_loop()
 
-                # Use run_in_executor to make the synchronous .predict() awaitable
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: client.predict(
-                        query_vector_json=json.dumps(query_vector),
-                        collection_name=self.qdrant_collection,
-                        top_k=self.top_k,
-                        query_filter=json.dumps(filters) if filters else None,
-                        api_name="/query_points"
-                    )
+                # Run the synchronous call while preserving request logging context.
+                result = await asyncio.to_thread(
+                    client.predict,
+                    query_vector_json=json.dumps(query_vector),
+                    collection_name=self.qdrant_collection,
+                    top_k=self.top_k,
+                    query_filter=json.dumps(filters) if filters else None,
+                    api_name="/query_points",
                 )
                 if isinstance(result, dict) and "error" in result:
                     logger.error(f"Gradio wrapper error: {result.get('message', result)}")
@@ -555,15 +552,13 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     logger.info(
                         f"AND filter returned 0 results (Gradio), retrying with priority field only: {priority_filter}"
                     )
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda: client.predict(
-                            query_vector_json=json.dumps(query_vector),
-                            collection_name=self.qdrant_collection,
-                            top_k=self.top_k,
-                            query_filter=json.dumps(priority_filter),
-                            api_name="/query_points"
-                        )
+                    result = await asyncio.to_thread(
+                        client.predict,
+                        query_vector_json=json.dumps(query_vector),
+                        collection_name=self.qdrant_collection,
+                        top_k=self.top_k,
+                        query_filter=json.dumps(priority_filter),
+                        api_name="/query_points",
                     )
                     if isinstance(result, dict) and "error" in result:
                         logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
