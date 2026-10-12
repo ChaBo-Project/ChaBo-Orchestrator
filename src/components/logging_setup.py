@@ -59,9 +59,43 @@ class ConsoleFormatter(logging.Formatter):
             return f"\033[31m{text}\033[0m"
         return text
 
+def _create_file_handler(path, backup_count):
+    """Return a file handler, or keep console logging if storage fails."""
+    handler = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            path,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+        handler.addFilter(ExecutionContextFilter())
+        handler.setFormatter(ConsoleFormatter(use_color=False))
+        return handler
+    except OSError:
+        if handler is not None:
+            handler.close()
+        logging.getLogger("logging_setup").warning(
+            "Cannot create log file %s. Continuing with console logging.",
+            path,
+            exc_info=True,
+        )
+        return None
+
+def _log_uncaught_exception(exc_type, exc_value, traceback):
+    """Record uncaught main-thread exceptions through configured logging."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, traceback)
+        return
+
+    logging.getLogger("execution").critical(
+        "Uncaught exception; process terminating.",
+        exc_info=(exc_type, exc_value, traceback),
+    )
 
 def configure_logging():
-    """Configure console output and a dedicated log file per process."""
+    """Configure console logging first, then optional process-file logging."""
     color_mode = os.getenv("LOG_COLOR", "auto").strip().lower()
     if color_mode not in {"auto", "always", "never"}:
         raise ValueError("LOG_COLOR must be auto, always, or never.")
@@ -76,61 +110,56 @@ def configure_logging():
     console_handler.addFilter(ExecutionContextFilter())
     console_handler.setFormatter(ConsoleFormatter(use_color=use_color))
 
-    process_id = os.getpid()
-    process_instance = uuid.uuid4().hex
-    base_dir = Path(os.getenv("LOG_DIR", "logs"))
-    process_dir = base_dir / f"process-{process_id}-{process_instance}"
-    process_dir.mkdir(parents=True, exist_ok=False)
-
-    process_handler = RotatingFileHandler(
-        process_dir / "process.log",
-        maxBytes=5 * 1024 * 1024,
-        backupCount=3,
-        encoding="utf-8",
-    )
-    process_handler.addFilter(ExecutionContextFilter())
-    process_handler.setFormatter(ConsoleFormatter(use_color=False))
-
     logging.basicConfig(
         level=logging.INFO,
-        handlers=[
-            console_handler,
-            process_handler,
-            ExecutionFileRouter(),
-        ],
+        handlers=[console_handler, ExecutionFileRouter()],
         force=True,
     )
 
-    logging.getLogger("logging_setup").info(
-        "Process logging ready. PID=%s; log file: %s",
-        process_id,
-        process_dir / "process.log",
+    process_dir = (
+        Path(os.getenv("LOG_DIR", "logs"))
+        / f"process-{os.getpid()}-{uuid.uuid4().hex}"
     )
+    process_handler = _create_file_handler(
+        process_dir / "process.log",
+        backup_count=3,
+    )
+
+    if process_handler is not None:
+        logging.getLogger().addHandler(process_handler)
+        logging.getLogger("logging_setup").info(
+            "Process logging ready. Log file: %s",
+            process_dir / "process.log",
+        )
+    sys.excepthook = _log_uncaught_exception
 
 @contextmanager
 def execution_logging(log_dir=None):
-    """Create an isolated log directory for one execution."""
+    """Keep an execution ID even when its log file cannot be created."""
     run_id = uuid.uuid4().hex
-    base_dir = Path(log_dir or os.getenv("LOG_DIR", "logs"))
-    run_dir = base_dir / f"run-{os.getpid()}-{run_id}"
-    run_dir.mkdir(parents=True, exist_ok=False)
-
-    handler = RotatingFileHandler(
-        run_dir / "execution.log",
-        maxBytes=5 * 1024 * 1024,
-        backupCount=1,
-        encoding="utf-8",
-    )
-    handler.setFormatter(ConsoleFormatter(use_color=False))
-    state = ExecutionLogState(handler=handler)
-
     run_token = run_id_context.set(run_id)
-    file_token = execution_log_context.set(state)
+    file_token = execution_log_context.set(None)
+    handler = None
+    state = None
     logger = logging.getLogger("execution")
 
     try:
-        logger.info("Execution started. Log directory: %s", run_dir)
+        base_dir = Path(log_dir or os.getenv("LOG_DIR", "logs"))
+        run_dir = base_dir / f"run-{os.getpid()}-{run_id}"
+        handler = _create_file_handler(
+            run_dir / "execution.log",
+            backup_count=1,
+        )
+
+        if handler is not None:
+            state = ExecutionLogState(handler=handler)
+            execution_log_context.set(state)
+            logger.info("Execution started. Log directory: %s", run_dir)
+        else:
+            logger.info("Execution started without a dedicated log file.")
+
         yield run_id
+
     except (asyncio.CancelledError, GeneratorExit):
         logger.info("Execution cancelled.")
         raise
@@ -140,10 +169,18 @@ def execution_logging(log_dir=None):
     else:
         logger.info("Execution scope finished.")
     finally:
-        state.active = False
+        if state is not None:
+            state.active = False
         execution_log_context.reset(file_token)
         run_id_context.reset(run_token)
-        handler.close()
+        if handler is not None:
+            try:
+                handler.close()
+            except OSError:
+                logger.warning(
+                    "Could not close execution log file.",
+                    exc_info=True,
+                )
 
 class ExecutionLoggingMiddleware:
     """Keep execution logging active for the whole HTTP response."""
