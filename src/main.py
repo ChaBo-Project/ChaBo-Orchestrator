@@ -317,4 +317,11 @@ if __name__ == "__main__":
     logger.info(f"Starting ChaBo RAG Orchestrator on {host}:{port}")
     logger.info(f"API Docs: http://{host}:{port}/docs")
 
-    uvicorn.run(app, host=host, port=port, log_level="info", access_log=True)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_config=None,
+        log_level=logging.getLogger().level,
+        access_log=True,
+    )

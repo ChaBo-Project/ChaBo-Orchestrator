@@ -95,3 +95,89 @@ def test_a_max_length_term_at_the_force_cut_boundary_is_still_caught():
     text, hit2 = text_filter.feed(" more text")
     assert hit2 is True
     assert "[blocked]" in text
+
+def test_confirmed_hit_logs_matched_term_once(caplog):
+    from components.guardrails.output_guard import (
+        compile_blocklist,
+        StreamingBlocklistFilter,
+    )
+
+    guard = StreamingBlocklistFilter(
+        compile_blocklist({"en": ["testword"]}),
+        notice="BLOCKED",
+    )
+
+    with caplog.at_level("WARNING"):
+        assert guard.feed("testword ") == ("BLOCKED", True)
+        guard.feed("more text")
+        guard.flush_final()
+
+    hits = [
+        record.getMessage()
+        for record in caplog.records
+        if "Output blocked:" in record.getMessage()
+    ]
+    assert len(hits) == 1
+    assert "match_type=whole_word" in hits[0]
+    assert "matched_text='testword'" in hits[0]
+
+
+def test_tentative_match_extended_into_word_does_not_log(caplog):
+    from components.guardrails.output_guard import (
+        compile_blocklist,
+        StreamingBlocklistFilter,
+    )
+
+    guard = StreamingBlocklistFilter(
+        compile_blocklist({"en": ["testword"]}),
+        notice="BLOCKED",
+    )
+
+    with caplog.at_level("WARNING"):
+        assert guard.feed("testword")[1] is False
+        assert guard.feed("ing ")[1] is False
+        assert guard.flush_final()[1] is False
+
+    assert not any(
+        "Output blocked:" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_final_buffer_hit_logs_stream_end(caplog):
+    from components.guardrails.output_guard import (
+        compile_blocklist,
+        StreamingBlocklistFilter,
+    )
+
+    guard = StreamingBlocklistFilter(
+        compile_blocklist({"en": ["testword"]}),
+        notice="BLOCKED",
+    )
+
+    with caplog.at_level("WARNING"):
+        assert guard.feed("testword")[1] is False
+        assert not caplog.records
+        assert guard.flush_final() == ("BLOCKED", True)
+
+    assert "at_stream_end=True" in caplog.records[-1].getMessage()
+
+
+def test_substring_hit_logs_matched_text(caplog):
+    from components.guardrails.output_guard import (
+        compile_blocklist,
+        StreamingBlocklistFilter,
+    )
+
+    guard = StreamingBlocklistFilter(
+        compile_blocklist({"zh": ["测试"]}),
+        notice="BLOCKED",
+    )
+
+    with caplog.at_level("WARNING"):
+        assert guard.feed("这是测试文本") == ("BLOCKED", True)
+
+    message = caplog.records[-1].getMessage()
+    assert "match_type=substring" in message
+    assert "matched_text='测试'" in message
+
