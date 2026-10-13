@@ -96,6 +96,13 @@ MAX_TURNS = 3
 MAX_CHARS = 8000
 ```
 
+Hosted chat can opt into `PROVIDER = huggingface_router` using `HF_TOKEN`.
+This uses `https://router.huggingface.co/v1` and avoids the installed Hub SDK's
+provider registry. Set `INFERENCE_PROVIDER = deepinfra` to select that provider,
+or `auto` to let the router choose. A suffix already present in `MODEL` takes
+precedence. Optional `ORGANIZATION` supplies the `X-HF-Bill-To` header.
+Existing providers, defaults, and error responses keep their current behavior.
+
 #### Metadata Filters Setup
 
 Enabling `filterable_fields` requires two additional steps beyond `params.cfg`:
