@@ -1,9 +1,11 @@
 import logging
+import asyncio
 # Set up logger
 logger = logging.getLogger(__name__)
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 
 # LangChain imports
+from ..logging_setup import mark_generation_outcome
 from ..utils import getconfig, get_config_value
 from ..llm import LLMClient, build_llm_client
 from .prompts import build_system_prompt, build_messages
@@ -73,22 +75,45 @@ class Generator:
 
 
     async def _call_llm(self, messages: list) -> str:
-        """Provider-agnostic LLM call (non-streaming). Delegates to the LLMClient."""
-        return await self.llm_client.ainvoke(messages)
+        """Call the LLM and record its generation outcome."""
+        mark_generation_outcome("running")
+        try:
+            answer = await self.llm_client.ainvoke(messages)
+        except asyncio.CancelledError:
+            mark_generation_outcome("cancelled")
+            raise
+        except Exception:
+            mark_generation_outcome("failed")
+            raise
+        else:
+            mark_generation_outcome("succeeded")
+            return answer
 
-    async def _call_llm_streaming(self, messages: list) -> AsyncGenerator[str, None]:
-        """Provider-agnostic streaming LLM call. Delegates to the LLMClient."""
-        async for chunk in self.llm_client.astream(messages):
-            yield chunk
+    async def _call_llm_streaming(
+        self, messages: list
+    ) -> AsyncGenerator[str, None]:
+        """Stream LLM output and record its generation outcome."""
+        mark_generation_outcome("running")
+        try:
+            async for chunk in self.llm_client.astream(messages):
+                yield chunk
+        except asyncio.CancelledError:
+            mark_generation_outcome("cancelled")
+            raise
+        except Exception:
+            mark_generation_outcome("failed")
+            raise
+        else:
+            mark_generation_outcome("succeeded")
 
     # Convenience pass-throughs so a Generator can stand in wherever an LLMClient is expected.
     async def ainvoke(self, messages: list) -> str:
-        return await self.llm_client.ainvoke(messages)
+        return await self._call_llm(messages)
 
     async def astream(self, messages: list) -> AsyncGenerator[str, None]:
-        async for chunk in self.llm_client.astream(messages):
+        async for chunk in self._call_llm_streaming(messages):
             yield chunk
-    
+
     # # --- Response Post-Processing Method (Centralized Logic) ---
 
     # def _process_final_response(self, answer: str, processed_results: List[Dict[str, Any]], chatui_format: bool) -> Union[str, Dict[str, Any]]:

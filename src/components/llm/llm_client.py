@@ -5,6 +5,7 @@ plus the per-task client factory.
 """
 import logging
 import os
+import time
 from typing import AsyncGenerator, Optional
 from urllib.parse import urlparse
 
@@ -15,6 +16,7 @@ from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_core.language_models import BaseChatModel  # for typing
 
 from ..utils import get_auth_for_generator
+from ..logging_setup import mark_generation_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -111,23 +113,66 @@ class LLMClient:
 
     async def ainvoke(self, messages: list) -> str:
         """Provider-agnostic LLM call using LangChain (non-streaming)."""
+        llm_started = time.perf_counter()
         try:
             logger.debug("Calling LLM without streaming")
             response = await self.chat_model.ainvoke(messages)
-            return response.content.strip()
+            answer = response.content.strip()
+            logger.info(
+                "LLM call completed: streaming=False duration_s=%.3f "
+                "provider=%s model=%s output_chars=%s",
+                time.perf_counter() - llm_started,
+                self.provider,
+                self.model,
+                len(answer),
+            )
+            return answer
         except Exception as e:
-            logger.exception(f"LLM generation failed: {e}")
+            logger.exception(
+                "LLM call failed: streaming=False duration_s=%.3f "
+                "provider=%s inference_provider=%s model=%s "
+                "error_type=%s error=%s",
+                time.perf_counter() - llm_started,
+                self.provider,
+                self.inference_provider or "-",
+                self.model,
+                type(e).__name__,
+                e,
+            )
             raise
 
     async def astream(self, messages: list) -> AsyncGenerator[str, None]:
         """Provider-agnostic streaming LLM call using LangChain."""
+        llm_started = time.perf_counter()
         try:
             logger.debug("Calling LLM with streaming")
+            output_chars = 0
             async for chunk in self.chat_model.astream(messages):
                 if hasattr(chunk, "content") and chunk.content:
+                    output_chars += len(chunk.content)
                     yield chunk.content
+
+            logger.info(
+                "LLM call completed: streaming=True duration_s=%.3f "
+                "provider=%s model=%s output_chars=%s",
+                time.perf_counter() - llm_started,
+                self.provider,
+                self.model,
+                output_chars,
+            )
         except Exception as e:
-            logger.exception(f"LLM streaming failed: {e}")
+            mark_generation_outcome("failed")
+            logger.exception(
+                "LLM streaming failed: duration_s=%.3f "
+                "provider=%s inference_provider=%s model=%s "
+                "error_type=%s error=%s",
+                time.perf_counter() - llm_started,
+                self.provider,
+                self.inference_provider or "-",
+                self.model,
+                type(e).__name__,
+                e,
+            )
             # Stream the error message out to the consumer
             yield f"Error: {str(e)}"
 

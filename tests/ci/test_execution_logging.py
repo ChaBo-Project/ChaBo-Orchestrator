@@ -292,3 +292,110 @@ def test_process_exit_marks_logs_and_records_uncaught_exception(
         assert "Traceback" in content
         assert "RuntimeError: STARTUP_TEST_FAILURE" in content
 
+@pytest.mark.parametrize(
+    ("streaming", "scenario", "expected"),
+    [
+        (True, "success", "succeeded"),
+        (True, "failure", "failed"),
+        (True, "cancel", "cancelled"),
+        (False, "success", "succeeded"),
+        (False, "failure", "failed"),
+    ],
+)
+def test_generation_outcome_in_request_summary(
+    isolated_logging, streaming, scenario, expected
+):
+    from types import SimpleNamespace
+
+    from components.generator.generator_orchestrator import Generator
+    from components.llm.llm_client import LLMClient
+
+    class FakeChatModel:
+        async def ainvoke(self, messages):
+            if scenario == "failure":
+                raise RuntimeError("TEST_PROVIDER_FAILURE")
+            return SimpleNamespace(content="TEST_ANSWER")
+
+        async def astream(self, messages):
+            yield SimpleNamespace(content="FIRST_CHUNK")
+            if scenario == "failure":
+                raise RuntimeError("TEST_PROVIDER_FAILURE")
+            if scenario == "cancel":
+                raise asyncio.CancelledError()
+            yield SimpleNamespace(content="LAST_CHUNK")
+
+    # Exercise real inference methods without credentials or network calls.
+    client = object.__new__(LLMClient)
+    client.provider = "huggingface"
+    client.inference_provider = "test-provider"
+    client.model = "test-model"
+    client.chat_model = FakeChatModel()
+
+    generator = object.__new__(Generator)
+    generator.llm_client = client
+    output = []
+
+    async def app(request_scope, request_receive, send):
+        async def generate():
+            if streaming:
+                async for chunk in generator.astream([]):
+                    output.append(chunk)
+            else:
+                try:
+                    output.append(await generator.ainvoke([]))
+                except RuntimeError:
+                    # Simulate an application handling a generation failure.
+                    output.append("HANDLED_FAILURE")
+
+        # Verify that a child task updates the middleware's shared state.
+        await asyncio.create_task(generate())
+
+        await send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [],
+        })
+        await send({
+            "type": "http.response.body",
+            "body": b"complete",
+            "more_body": False,
+        })
+
+    async def send(message):
+        pass
+
+    request = logs.ExecutionLoggingMiddleware(app)(scope(), receive, send)
+
+    if scenario == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(request)
+    else:
+        asyncio.run(request)
+
+    files = list(isolated_logging.glob("run-*/execution.log"))
+    assert len(files) == 1
+    content = files[0].read_text(encoding="utf-8")
+    summary = next(
+        line for line in content.splitlines()
+        if "Request summary:" in line
+    )
+    assert f"generation_outcome={expected}" in summary
+
+    if scenario == "failure":
+        assert "Request ended with generation failure:" in content
+        assert "status=200" in summary
+        assert "response_complete=True outcome=finished" in summary
+        if streaming:
+            assert output[0] == "FIRST_CHUNK"
+            assert output[-1] == "Error: TEST_PROVIDER_FAILURE"
+            assert "inference_provider=test-provider" in content
+    elif scenario == "success":
+        assert output == (
+            ["FIRST_CHUNK", "LAST_CHUNK"]
+            if streaming else ["TEST_ANSWER"]
+        )
+        assert "Request ended with generation failure:" not in content
+    else:
+        assert "response_complete=False outcome=cancelled" in summary
+
+    assert logs.generation_log_context.get() is None

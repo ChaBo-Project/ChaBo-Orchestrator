@@ -378,8 +378,31 @@ a generated ID. Reused IDs still get separate execution directories.
 /health bypasses request-ID handling and request-file creation.
 
 Request summaries include method, path, HTTP status, elapsed seconds,
-response completion and execution outcome. A finished outcome means the
-application returned; it does not guarantee that answer generation succeeded.
+response completion, execution outcome and generation outcome.
+
+`outcome=finished` means the application returned. HTTP 200 and
+`response_complete=True` do not guarantee successful answer generation:
+a handled LLM failure can still complete the response stream.
+
+`generation_outcome` tracks the answer-generation LLM call:
+- `not_started`: the tracked LLM call was not reached.
+- `running`: the call started but no terminal outcome was recorded.
+- `succeeded`: the LLM call completed; answer quality and citations
+  are not assessed by this field.
+- `failed`: a generation failure was recorded.
+- `cancelled`: cancellation reached the tracked generation call.
+
+A recorded generation failure is preserved for the rest of the request.
+The middleware also emits a WARNING when a request ends with that failure.
+
+Embedding, Qdrant search, reranking and LLM calls log elapsed seconds.
+Qdrant search timing includes client initialization and filter retries.
+Reranking logs distinguish completion, disabled mode and failure with
+fallback to vector-search order. Streaming LLM timing includes time spent
+yielding chunks to the consumer.
+
+Routine httpx and httpcore messages are suppressed at INFO.
+Set LOG_LEVEL=DEBUG to restore detailed HTTP diagnostics.
 
 Confirmed blocklist hits log the matched text and match type at WARNING.
 Whole-word matches use normalized text, which may differ from the original

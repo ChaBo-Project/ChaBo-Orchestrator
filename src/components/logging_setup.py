@@ -18,18 +18,25 @@ from pathlib import Path
 
 run_id_context = ContextVar("chabo_log_run_id", default="-")
 execution_log_context = ContextVar("chabo_execution_log", default=None)
+generation_log_context = ContextVar("chabo_generation_log", default=None)
 _retention_lock = threading.Lock()
 _last_retention_check = {}
 _LOG_DIRECTORY_RE = re.compile(r"(?:run|process)-\d+-[0-9a-f]{32}")
 _REQUEST_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
+@dataclass
+class GenerationLogState:
+    outcome: str = "not_started"
 
+def mark_generation_outcome(outcome):
+    """Track generation status across tasks sharing one request context."""
+    state = generation_log_context.get()
+    if state is not None and state.outcome != "failed":
+        state.outcome = outcome
 @dataclass
 class ExecutionLogState:
     handler: logging.Handler
     active: bool = True
-
-
 class ExecutionFileRouter(logging.Handler):
     """Send each record only to its current execution's file."""
 
@@ -39,13 +46,10 @@ class ExecutionFileRouter(logging.Handler):
             return
         record.run_id = run_id_context.get()
         state.handler.handle(record)
-
 class ExecutionContextFilter(logging.Filter):
     def filter(self, record):
         record.run_id = run_id_context.get()
         return True
-
-
 class ConsoleFormatter(logging.Formatter):
     converter = time.gmtime
 
@@ -211,6 +215,17 @@ def configure_logging():
         handlers=[console_handler, ExecutionFileRouter()],
         force=True,
     )
+
+    # Keep routine HTTP traffic out of normal application logs.
+    # DEBUG restores detailed HTTP diagnostics.
+    http_log_level = (
+        logging.DEBUG
+        if log_level == logging.DEBUG
+        else max(log_level, logging.WARNING)
+    )
+    for logger_name in ("httpx", "httpcore"):
+        logging.getLogger(logger_name).setLevel(http_log_level)
+
     cleanup_completed_logs(Path(os.getenv("LOG_DIR", "logs")))
 
     process_dir = (
@@ -242,6 +257,7 @@ def execution_logging(log_dir=None, request_id=None):
     run_id = request_id or execution_id
     run_token = run_id_context.set(run_id)
     file_token = execution_log_context.set(None)
+    generation_token = generation_log_context.set(GenerationLogState())
     handler = None
     state = None
     logger = logging.getLogger("execution")
@@ -276,6 +292,7 @@ def execution_logging(log_dir=None, request_id=None):
         if state is not None:
             state.active = False
 
+        generation_log_context.reset(generation_token)
         execution_log_context.reset(file_token)
         run_id_context.reset(run_token)
 
@@ -359,15 +376,33 @@ class ExecutionLoggingMiddleware:
                 raise
             finally:
                 duration = time.perf_counter() - started
-                logging.getLogger("execution").info(
+                generation_state = generation_log_context.get()
+                generation_outcome = (
+                    generation_state.outcome
+                    if generation_state is not None
+                    else "not_started"
+                )
+                logger = logging.getLogger("execution")
+
+                if generation_outcome == "failed":
+                    logger.warning(
+                        "Request ended with generation failure: "
+                        "status=%s response_complete=%s",
+                        status if status is not None else "-",
+                        response_complete,
+                    )
+
+                logger.info(
                     "Request summary: method=%r path=%r status=%s "
-                    "duration_s=%.3f response_complete=%s outcome=%s",
+                    "duration_s=%.3f response_complete=%s outcome=%s "
+                    "generation_outcome=%s",
                     scope.get("method", "-"),
                     scope.get("path", "-"),
                     status if status is not None else "-",
                     duration,
                     response_complete,
                     outcome,
+                    generation_outcome,
                 )
 
 
