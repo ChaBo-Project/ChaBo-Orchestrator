@@ -180,4 +180,3 @@ def test_substring_hit_logs_matched_text(caplog):
     message = caplog.records[-1].getMessage()
     assert "match_type=substring" in message
     assert "matched_text='测试'" in message
-

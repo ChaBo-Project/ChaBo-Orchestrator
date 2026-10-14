@@ -404,5 +404,3 @@ class ExecutionLoggingMiddleware:
                     outcome,
                     generation_outcome,
                 )
-
-
