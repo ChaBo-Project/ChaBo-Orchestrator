@@ -251,6 +251,8 @@ async def process_query_streaming(
     and send it on the chat request). `ingest_node` leaves it untouched when no raw
     `file_content` is supplied.
     """
+    # This initial_state block is mirrored in tests/eval/graph_runner.py's run_case() -
+    # keep both in sync if this shape changes.
     initial_state = {
         "query": query,
         "metadata": {"session_type": session_type},
