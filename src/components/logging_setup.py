@@ -46,6 +46,22 @@ class ExecutionFileRouter(logging.Handler):
             return
         record.run_id = run_id_context.get()
         state.handler.handle(record)
+
+class AccessLogQueryFilter(logging.Filter):
+    """Remove query strings before access logs reach any handler."""
+
+    def filter(self, record):
+        if (
+            record.name == "uvicorn.access"
+            and isinstance(record.args, tuple)
+            and len(record.args) == 5
+        ):
+            client, method, target, version, status = record.args
+            if isinstance(target, str):
+                target = target.partition("?")[0]
+            record.args = (client, method, target, version, status)
+        return True
+
 class ExecutionContextFilter(logging.Filter):
     def filter(self, record):
         record.run_id = run_id_context.get()
@@ -215,6 +231,12 @@ def configure_logging():
         handlers=[console_handler, ExecutionFileRouter()],
         force=True,
     )
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(
+        isinstance(log_filter, AccessLogQueryFilter)
+        for log_filter in access_logger.filters
+    ):
+        access_logger.addFilter(AccessLogQueryFilter())
 
     # Keep routine HTTP traffic out of normal application logs.
     # DEBUG restores detailed HTTP diagnostics.

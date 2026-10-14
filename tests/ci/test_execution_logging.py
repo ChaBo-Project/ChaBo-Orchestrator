@@ -399,3 +399,35 @@ def test_generation_outcome_in_request_summary(
         assert "response_complete=False outcome=cancelled" in summary
 
     assert logs.generation_log_context.get() is None
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/",
+        "/v1/models",
+        "/?__theme=light&__sign=test-secret",
+        "/chatfed-ui-stream/stream?token=test-secret",
+    ],
+)
+def test_access_logs_remove_query_strings(target):
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:1234", "GET", target, "1.1", 200),
+        None,
+    )
+
+    assert logs.AccessLogQueryFilter().filter(record)
+
+    assert record.args == (
+        "127.0.0.1:1234",
+        "GET",
+        target.partition("?")[0],
+        "1.1",
+        200,
+    )
+    assert "test-secret" not in record.getMessage()
+    assert "?" not in record.getMessage()
