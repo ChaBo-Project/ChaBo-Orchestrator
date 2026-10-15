@@ -68,14 +68,26 @@ class DeployedChatUITests(unittest.TestCase):
                 self.assertIsInstance(chunk, str)
                 chunks.append(chunk)
 
-        self.assertGreater(len(chunks), 1, "Expected multiple text chunks")
+        self.assertGreater(
+            len(chunks),
+            1,
+            f"Expected multiple text chunks; received {len(chunks)}. "
+            f"Response: {''.join(chunks)!r}",
+        )
         answer = "".join(chunks)
         self.assertIn("**Sources:**", answer)
         text, sources = answer.split("**Sources:**", 1)
         self.assertTrue(text.strip(), "The answer was empty")
 
-        references = set(re.findall(r"\[(\d+)\]", text))
-        source_numbers = set(re.findall(r"(?m)^(\d+)\.\s", sources))
+        # Recognize both [1] and grouped references such as [1, 3].
+        references = set()
+        for group in re.findall(r"\[(\d+(?:\s*,\s*\d+)*)\]", text):
+            references.update(int(value) for value in group.split(","))
+
+        source_numbers = {
+            int(value)
+            for value in re.findall(r"(?m)^(\d+)\.\s", sources)
+        }
         self.assertTrue(references, "The answer contained no citations")
         self.assertTrue(
             references <= source_numbers,
@@ -101,29 +113,59 @@ class DeployedChatUITests(unittest.TestCase):
         )
 
     def test_follow_up_with_conversation_history(self):
-        question = (
-            "What is the training grant per participant in the "
-            "Orion Training Programme, and when do applications close?"
-        )
-        first_answer = self.stream_answer(
-            [{"role": "user", "content": question}],
-            "reg-orion-grant.txt",
-        )
+        cases = [
+            (
+                "Orion Training Programme",
+                "reg-orion-grant.txt",
+                "420",
+                "175",
+            ),
+            (
+                "Vega Gardening Programme",
+                "reg-vega-grant.txt",
+                "175",
+                "420",
+            ),
+        ]
 
-        self.stream_answer(
-            [
-                {"role": "user", "content": question},
-                {"role": "assistant", "content": first_answer},
-                {
-                    "role": "user",
-                    "content": (
-                        "Where is its induction session held, "
-                        "and what must participants bring?"
-                    ),
-                },
-            ],
-            "reg-orion-induction.txt",
-        )
+        for programme, source, expected_amount, other_amount in cases:
+            with self.subTest(programme=programme):
+                question = (
+                    f"When do applications close for the {programme}?"
+                )
+                first_answer = self.stream_answer(
+                    [{"role": "user", "content": question}],
+                    source,
+                )
+
+                answer = self.stream_answer(
+                    [
+                        {"role": "user", "content": question},
+                        {"role": "assistant", "content": first_answer},
+                        {
+                            "role": "user",
+                            "content": (
+                                "How much is its grant per participant? "
+                                "Give the amount in digits for only the "
+                                "programme we were discussing, "
+                                "and include a source citation."
+                            ),
+                        },
+                    ],
+                    source,
+                )
+
+                answer_text = answer.split("**Sources:**", 1)[0]
+                self.assertRegex(
+                    answer_text,
+                    rf"\b{expected_amount}\b",
+                    "The follow-up did not give the expected grant",
+                )
+                self.assertNotRegex(
+                    answer_text,
+                    rf"\b{other_amount}\b",
+                    "The follow-up included the other programme's grant",
+                )
 
     def test_invalid_request_is_rejected(self):
         base_url = os.environ.get("REGRESSION_ORCHESTRATOR_URL", "").strip()

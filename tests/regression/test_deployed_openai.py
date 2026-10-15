@@ -102,13 +102,17 @@ class DeployedOpenAITests(unittest.TestCase):
         answer = choice["message"]["content"]
         self.check_answer(answer, expected_source)
 
-        if "citations" in result:
-            self.assertIsInstance(result["citations"], list)
-            self.assertTrue(result["citations"])
-            for citation in result["citations"]:
-                self.assertIsInstance(citation, str)
-                self.assertTrue(citation)
+        self.assertIn(
+            "citations",
+            result,
+            "The response is missing the citations field",
+        )
+        self.assertIsInstance(result["citations"], list)
+        self.assertTrue(result["citations"], "The citations list is empty")
 
+        for citation in result["citations"]:
+            self.assertIsInstance(citation, str)
+            self.assertTrue(citation.strip(), "A citation is empty")
         return answer
 
     def test_models_returns_deployment_model(self):
@@ -197,7 +201,12 @@ class DeployedOpenAITests(unittest.TestCase):
                 finished = True
 
         self.assertTrue(finished, "Missing finish_reason: stop")
-        self.assertGreater(len(text_chunks), 1)
+        self.assertGreater(
+            len(text_chunks),
+            1,
+            f"Expected multiple text chunks; received {len(text_chunks)}. "
+            f"Response: {''.join(text_chunks)!r}",
+        )
         self.check_answer(
             "".join(text_chunks), "reg-orion-grant.txt"
         )
@@ -230,26 +239,60 @@ class DeployedOpenAITests(unittest.TestCase):
             {"role": "assistant", "content": "Previous answer"}
         ])
 
-    def test_follow_up_uses_conversation_history(self):
-        first_answer = self.complete(
-            [{"role": "user", "content": QUESTION}],
-            "reg-orion-grant.txt",
-        )
-        self.complete(
-            [
-                {"role": "user", "content": QUESTION},
-                {"role": "assistant", "content": first_answer},
-                {
-                    "role": "user",
-                    "content": (
-                        "Where is its induction session held, "
-                        "and what must participants bring?"
-                    ),
-                },
-            ],
-            "reg-orion-induction.txt",
-        )
+    def test_follow_up_with_conversation_history(self):
+        cases = [
+            (
+                "Orion Training Programme",
+                "reg-orion-grant.txt",
+                "420",
+                "175",
+            ),
+            (
+                "Vega Gardening Programme",
+                "reg-vega-grant.txt",
+                "175",
+                "420",
+            ),
+        ]
 
+        for programme, source, expected_amount, other_amount in cases:
+            with self.subTest(programme=programme):
+                question = (
+                    f"When do applications close for the {programme}?"
+                )
+                first_answer = self.complete(
+                    [{"role": "user", "content": question}],
+                    source,
+                )
+
+                answer = self.complete(
+                    [
+                        {"role": "user", "content": question},
+                        {"role": "assistant", "content": first_answer},
+                        {
+                            "role": "user",
+                            "content": (
+                                "How much is its grant per participant? "
+                                "Give the amount in digits for only the "
+                                "programme we were discussing, "
+                                "and include a source citation."
+                            ),
+                        },
+                    ],
+                    source,
+                )
+
+                answer_text = answer.split("**Sources:**", 1)[0]
+                self.assertRegex(
+                    answer_text,
+                    rf"\b{expected_amount}\b",
+                    "The follow-up did not give the expected grant",
+                )
+                self.assertNotRegex(
+                    answer_text,
+                    rf"\b{other_amount}\b",
+                    "The follow-up included the other programme's grant",
+                )
 
 if __name__ == "__main__":
     unittest.main()

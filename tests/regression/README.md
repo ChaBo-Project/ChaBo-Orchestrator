@@ -12,7 +12,7 @@ Thirteen unittest tests cover:
 
 - A basic question returning a non-empty streamed answer.
 - SSE content type, JSON string chunks, complete frames and one final end event.
-- Single-number citation markers matching source-list numbers and an expected filename.
+- Single and grouped citation markers matching source-list numbers and an expected filename.
 - A follow-up request containing previous user and assistant messages.
 - Rejection of a malformed message with HTTP 422 and validation details.
 - Private Orchestrator Space access with valid, missing and invalid credentials.
@@ -39,6 +39,9 @@ identical AI-generated wording.
 
 ## Test environment
 
+The regression deployment must have `openai_citations = true` in the
+`[api]` configuration section. This is the default.
+
 The current environment uses:
 
 - ChaBo-Deploy: `hf-spaces-v0.2.0`.
@@ -64,7 +67,7 @@ Run commands from the Orchestrator repository root.
 Install the dependency:
 
 ```bash
-python -m pip install "huggingface_hub==2.1.1"
+python -m pip install "huggingface_hub==0.34.0"
 ```
 
 Authenticate using a saved Hugging Face login:
@@ -168,7 +171,7 @@ the defect is fixed. Keep the citation assertion unchanged.
 - PDF, DOCX and Markdown uploads.
 - Invalid attachments and attachment isolation between requests.
 - Additional API validation cases.
-- Grouped citations on the LangServe route and exact citation-to-document mapping.
+- Exact citation-to-document mapping.
 - Verification of immutable companion deployment revisions.
 
 Add relevant regression coverage when introducing features or fixing bugs.
