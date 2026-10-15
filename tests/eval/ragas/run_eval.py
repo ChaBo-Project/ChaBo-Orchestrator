@@ -13,7 +13,9 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -25,11 +27,26 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from components.utils import getconfig  # noqa: E402  (after sys.path setup, same pattern as judge.py)
 
 from judge import build_judge, UnsupportedJudgeProviderError  # noqa: E402
-from run_record import summarize, write_cases_csv, write_cases_jsonl  # noqa: E402
+from run_record import (  # noqa: E402
+    append_runs_csv, build_manifest, summarize, test_set_hash, write_cases_csv, write_cases_jsonl,
+)
 from scoring import build_metrics, score_testset  # noqa: E402
 from testset import load_testset  # noqa: E402
 
 DEFAULT_OUT_DIR = os.path.join(os.path.dirname(__file__), "results")
+
+
+def _git_commit() -> Optional[str]:
+    """Short commit hash of the local chabo checkout running this tooling - best-effort,
+    None if git isn't available or this isn't a git checkout."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return None
 
 
 async def _call_eval_query(
@@ -120,13 +137,29 @@ async def main_async(args: argparse.Namespace) -> int:
 
     os.makedirs(args.out_dir, exist_ok=True)
     summary = summarize(scored)
-    with open(os.path.join(args.out_dir, "summary.json"), "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
     write_cases_jsonl(scored, os.path.join(args.out_dir, "cases.jsonl"))
     write_cases_csv(scored, os.path.join(args.out_dir, "cases.csv"))
 
+    # Mode A run context: only what's actually known without a rendered instance config -
+    # generator_model is omitted since Mode A never sees the remote instance's own config.
+    run_context = {
+        "mode": "A",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "endpoint": args.endpoint,
+        "chabo_commit": _git_commit(),
+        "testset_path": args.testset,
+        "testset_hash": test_set_hash(args.testset),
+        "judge_model": config.get("ragas", "JUDGE_MODEL", fallback=None),
+        "num_cases": len(scored),
+    }
+    manifest = build_manifest(run_context, summary)
+    with open(os.path.join(args.out_dir, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+    append_runs_csv(os.path.join(args.out_dir, "runs.csv"), run_context, summary)
+
     print(f"\nDone. {summary['total_cases']} case(s), counts={summary['counts']}")
     print(f"Averages: {summary['averages']}")
+    print(f"Blocked-correctness: {summary['blocked_correctness']}")
     print(f"Results written to {args.out_dir}")
     return 0
 
