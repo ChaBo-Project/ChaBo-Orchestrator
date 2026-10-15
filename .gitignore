@@ -10,6 +10,7 @@ chabo_env/
 CLAUDE.md
 FeatureAndPR/
 tests/eval/results/
+tests/eval/ragas/results/
 tests/health/logs/
 EVAL_PLAN.md
 query_rewriting_testdata.json
