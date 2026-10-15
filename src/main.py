@@ -3,9 +3,10 @@ ChaBo RAG Orchestrator - Production Entry Point
 """
 import os
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from langserve import add_routes
 from langchain_core.runnables import RunnableLambda
+from pydantic import BaseModel
 import uvicorn
 from functools import partial
 
@@ -26,7 +27,7 @@ from components.guardrails.input_guard import InputGuardClient
 from components.guardrails.output_guard import load_compiled_blocklist
 from components.guardrails.output_classification import OutputClassificationConfig, build_output_classification_messages
 from components.guardrails.llm_guard import build_guard_backend, DEFAULT_CLASSIFIER_MODEL
-from typing import Dict
+from typing import Dict, List, Any, Optional
 
 config = getconfig("params.cfg")
 MAX_TURNS = config.getint("conversation_history", "MAX_TURNS", fallback=3)
@@ -236,6 +237,113 @@ async def root():
             "chatfed-with-file-stream": "/chatfed-with-file-stream (LangServe)",
         }
     }
+
+
+#----------------------------------------
+# EVAL-ONLY ROUTE (internal, token-gated)
+#----------------------------------------
+# Lets the RAGAS eval tooling (tests/eval/ragas/, a separate client with its own
+# dependencies - see that folder) ask the real compiled_graph a question over HTTP and get
+# back the retrieved context + internal status that the public chat routes never expose.
+# Gated by EVAL_API_KEY so this doesn't leak corpus content to anyone who can reach the
+# instance - 404 (not 401) when unset, so the route's existence isn't revealed on instances
+# that haven't opted in.
+EVAL_API_KEY = os.getenv("EVAL_API_KEY")
+
+
+class EvalQueryRequest(BaseModel):
+    question: str
+
+
+class EvalContext(BaseModel):
+    text: str
+    metadata: Dict[str, Any] = {}
+
+
+class EvalQueryResponse(BaseModel):
+    answer: Optional[str] = None
+    retrieved_contexts: List[EvalContext] = []
+    status: str  # "ok" | "error" | "no_context" | "blocked"
+    error: Optional[str] = None
+
+
+@app.post("/eval-query", response_model=EvalQueryResponse, include_in_schema=False)
+async def eval_query(request: EvalQueryRequest, x_eval_token: Optional[str] = Header(default=None)):
+    """
+    Run one question through the real compiled_graph and return the answer, retrieved
+    context, and a status taxonomy - status is exactly one of:
+    - "ok": an answer was produced from at least one retrieved chunk.
+    - "error": the run raised, the graph emitted an error event, retrieval explicitly
+      failed, or no answer came back at all.
+    - "no_context": retrieval succeeded but returned zero chunks.
+    - "blocked": the input guard blocked the question before retrieval ran.
+
+    Listens on both the "custom" channel (carries the citation-cleaned final answer, same
+    text a user sees) and the "values" channel (carries the final graph state - the only
+    place raw_documents and internal flags like retrieval_success/guard_blocked live;
+    production's process_query_streaming never needs them, so it only requests "custom").
+    """
+    if not EVAL_API_KEY or x_eval_token != EVAL_API_KEY:
+        raise HTTPException(status_code=404)
+
+    # Mirrors process_query_streaming's initial_state block (streaming.py) - keep both in
+    # sync if that shape changes. No conversation history: eval questions are standalone.
+    initial_state = {
+        "query": request.question,
+        "metadata": {"session_type": "eval"},
+        "raw_documents": [],
+        "conversation_context": None,
+        "metadata_filters": None,
+        "user_messages_history": None,
+    }
+
+    answer: Optional[str] = None
+    final_state: Dict[str, Any] = {}
+    error_message: Optional[str] = None
+    saw_error_event = False
+
+    try:
+        async for mode, payload in compiled_graph.astream(initial_state, stream_mode=["custom", "values"]):
+            if mode == "custom":
+                event = payload.get("event")
+                if event == "final_answer":
+                    answer = payload["data"].get("text")
+                elif event == "error":
+                    saw_error_event = True
+                    error_message = payload.get("data", {}).get("error")
+            elif mode == "values":
+                final_state = payload
+    except Exception as exc:
+        logger.error(f"eval_query pipeline error: {exc}", exc_info=True)
+        return EvalQueryResponse(status="error", error=str(exc))
+
+    chunks = [
+        EvalContext(text=doc.page_content, metadata=doc.metadata)
+        for doc in final_state.get("raw_documents", [])
+    ]
+
+    # Absent (not False) whenever retrieve_node never ran, e.g. a guard-blocked question -
+    # only an explicit False means retrieval itself failed.
+    metadata = final_state.get("metadata", {})
+    retrieval_success = metadata.get("retrieval_success")
+
+    if final_state.get("guard_blocked"):
+        status = "blocked"
+    elif saw_error_event:
+        status = "error"
+        error_message = error_message or "graph emitted an error event"
+    elif retrieval_success is False:
+        status = "error"
+        error_message = error_message or metadata.get("retrieval_error") or "retrieval failed"
+    elif not answer:
+        status = "error"
+        error_message = error_message or metadata.get("generation_error") or "no answer produced"
+    elif not chunks:
+        status = "no_context"
+    else:
+        status = "ok"
+
+    return EvalQueryResponse(answer=answer, retrieved_contexts=chunks, status=status, error=error_message)
 
 
 #----------------------------------------
