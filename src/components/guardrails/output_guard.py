@@ -262,6 +262,12 @@ class StreamingBlocklistFilter:
         n = len(text)
         for m in pattern.finditer(text):
             if at_end or m.end() < n:
+                logger.warning(
+                    "Output blocked: match_type=whole_word "
+                    "matched_text=%r at_stream_end=%s",
+                    m.group(0),
+                    at_end,
+                )
                 return True
         return False
 
@@ -274,8 +280,16 @@ class StreamingBlocklistFilter:
         always definitive (no right-boundary requirement → no tentative case)."""
         if self.c.boundary_re is not None and self._match(self.c.boundary_re, normalize_arabic(text), at_end):
             return True
-        if self.c.substring_re is not None and self.c.substring_re.search(text):
-            return True
+        if self.c.substring_re is not None:
+            match = self.c.substring_re.search(text)
+            if match is not None:
+                logger.warning(
+                    "Output blocked: match_type=substring "
+                    "matched_text=%r at_stream_end=%s",
+                    match.group(0),
+                    at_end,
+                )
+                return True
         return False
 
     def _flush_safe(self) -> str:

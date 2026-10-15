@@ -341,3 +341,97 @@ Subclass `BaseRenderer` in `renderers.py` (text / notice / footnote / sources / 
 | `nodes.py` lines ~290–390 | Large block of commented-out old `retrieve_node` implementations — dead code, pending cleanup |
 | `streaming.py` | `process_query_streaming` is functional but flagged for future rework toward an agentic workflow |
 | `state.py` `raw_context` field | Listed as "Alias for backward compatibility" — not written by any current node, candidate for removal |
+
+## Logging and troubleshooting
+
+Application logs include a UTC timestamp, severity, process ID (PID),
+request correlation ID (RUN), logger name and message.
+
+### Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| LOG_LEVEL | INFO | DEBUG, INFO, WARNING, ERROR or CRITICAL |
+| LOG_DIR | logs | Directory for process and request logs |
+| LOG_COLOR | auto | auto, always or never; colors ERROR and CRITICAL console messages red |
+
+Set these variables in the process environment before starting the Orchestrator.
+DEBUG may include full LLM context; use it only for troubleshooting.
+
+### Log files
+
+Each process creates `process-<PID>-<unique-id>/process.log`.
+Each HTTP request except `/health` creates
+`run-<PID>-<unique-id>/execution.log`.
+
+Process logs contain startup and request messages. Request files isolate
+individual executions, including streamed responses and Gradio predict
+calls made through `asyncio.to_thread()`.
+
+Console output and process files may interleave concurrent requests.
+Use the separate request files when investigating one execution.
+
+A valid incoming `X-Request-ID` becomes the RUN value and is returned in
+the response header. Accepted IDs contain 1–128 ASCII letters, digits,
+dots, underscores or hyphens. Missing, invalid or duplicate headers receive
+a generated ID. Reused IDs still get separate execution directories.
+/health bypasses request-ID handling and request-file creation.
+
+Request summaries include method, path, HTTP status, elapsed seconds,
+response completion, execution outcome and generation outcome.
+
+`outcome=finished` means the application returned. HTTP 200 and
+`response_complete=True` do not guarantee successful answer generation:
+a handled LLM failure can still complete the response stream.
+
+`generation_outcome` tracks the answer-generation LLM call:
+- `not_started`: the tracked LLM call was not reached.
+- `running`: the call started but no terminal outcome was recorded.
+- `succeeded`: the LLM call completed; answer quality and citations
+  are not assessed by this field.
+- `failed`: a generation failure was recorded.
+- `cancelled`: cancellation reached the tracked generation call.
+
+A recorded generation failure is preserved for the rest of the request.
+The middleware also emits a WARNING when a request ends with that failure.
+
+Embedding, Qdrant search, reranking and LLM calls log elapsed seconds.
+Qdrant search timing includes client initialization and filter retries.
+Reranking logs distinguish completion, disabled mode and failure with
+fallback to vector-search order. Streaming LLM timing includes time spent
+yielding chunks to the consumer.
+
+Routine httpx and httpcore messages are suppressed at INFO.
+Set LOG_LEVEL=DEBUG to restore detailed HTTP diagnostics.
+
+Confirmed blocklist hits log the matched text and match type at WARNING.
+Whole-word matches use normalized text, which may differ from the original
+answer. Tentative matches do not produce blocking warnings.
+
+### Rotation and retention
+
+Files rotate around 5 MiB. Process logs keep three backups; request logs
+keep one backup.
+
+Completed directories receive a `.finished` marker after their handler
+closes. Process markers are written during normal Python exit.
+
+Cleanup runs at startup and when logged requests begin, at most once per
+minute per process and log directory. It removes matching directories whose
+finished marker is older than seven days.
+
+Directories without a marker remain untouched, including logs left by
+forced termination. These require manual review; retention is not a hard
+limit on total disk usage.
+
+If a log file cannot be created, application logging continues through the
+console. Uncaught main-thread exceptions after logging configuration are
+recorded through the configured handlers.
+
+### Server logging
+
+The entry point starts Uvicorn with `log_config=None` and the configured
+log level so it uses the application logging configuration.
+
+Log files are stored inside the running environment. Use a mounted,
+persistent directory when files must survive container replacement.
