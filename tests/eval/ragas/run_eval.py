@@ -191,26 +191,31 @@ async def _run_mode_b(args: argparse.Namespace, token: str) -> int:
     instance_repo_dir = Path(args.instance_repo)
     print(f"Rendering config from {instance_repo_dir}...")
     rendered_dir, chabo_tag = render_config(instance_repo_dir)
-    override_path = Path(args.override) if args.override else None
-    swept = apply_override(rendered_dir / "params.override.cfg", override_path)
+    try:
+        override_path = Path(args.override) if args.override else None
+        swept = apply_override(rendered_dir / "params.override.cfg", override_path)
 
-    os.makedirs(args.out_dir, exist_ok=True)
-    rendered_copy_path = os.path.join(args.out_dir, "params.override.cfg")
-    shutil.copy(rendered_dir / "params.override.cfg", rendered_copy_path)
+        os.makedirs(args.out_dir, exist_ok=True)
+        rendered_copy_path = os.path.join(args.out_dir, "params.override.cfg")
+        shutil.copy(rendered_dir / "params.override.cfg", rendered_copy_path)
 
-    secrets = _gather_secrets()
-    secrets["EVAL_API_KEY"] = token  # our own disposable container - we set its token too
+        secrets = _gather_secrets()
+        secrets["EVAL_API_KEY"] = token  # our own disposable container - we set its token too
 
-    print(f"Starting temporary orchestrator container (chabo_tag={chabo_tag}, port={args.host_port})...")
-    async with temp_container(chabo_tag, rendered_dir, args.host_port, secrets) as endpoint:
-        print(f"Container healthy at {endpoint}.")
-        return await _score_and_record(endpoint, token, args, {
-            "mode": "B",
-            "chabo_tag": chabo_tag,
-            "override_path": args.override,
-            "swept_fields": swept,
-            "rendered_config_copy": rendered_copy_path,
-        })
+        print(f"Starting temporary orchestrator container (chabo_tag={chabo_tag}, port={args.host_port})...")
+        async with temp_container(chabo_tag, rendered_dir, args.host_port, secrets) as endpoint:
+            print(f"Container healthy at {endpoint}.")
+            return await _score_and_record(endpoint, token, args, {
+                "mode": "B",
+                "chabo_tag": chabo_tag,
+                "override_path": args.override,
+                "swept_fields": swept,
+                "rendered_config_copy": rendered_copy_path,
+            })
+    finally:
+        # rendered_dir is a disposable temp directory (see config_render.render_config's
+        # docstring) - the permanent record already landed at rendered_copy_path above.
+        shutil.rmtree(rendered_dir, ignore_errors=True)
 
 
 async def main_async(args: argparse.Namespace) -> int:

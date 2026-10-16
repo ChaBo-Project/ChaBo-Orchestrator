@@ -7,11 +7,20 @@ deploy.env's values for ${VAR} placeholders in params.override.cfg.template).
 
 Operates on an already-checked-out local instance repo (--instance-repo <path>) - no cloning
 and no branch-switching happen here; whatever's currently checked out there is what gets used.
+
+Rendered output goes to a disposable temp directory, never inside the instance repo's own
+checkout - unlike the real deploy.yml (which clones a fresh, throwaway copy per CI run, so it
+can write .rendered/ inside without consequence), --instance-repo points at a real, persistent
+local checkout the user keeps using for other things. Writing generated output into it would
+leave untracked files sitting there indefinitely. The long-term record of "what config produced
+this run" is a separate, deliberate copy into that run's results folder (see run_eval.py) - not
+this working copy, which only needs to exist for the duration of one run.
 """
 import configparser
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -36,8 +45,11 @@ def render_config(instance_repo_dir: Path) -> Tuple[Path, str]:
     """
     Run the instance repo's own render-config.py + validate-config.py against its real
     deploy.env + params.override.cfg.template. Returns (rendered_config_dir, chabo_tag) -
-    rendered_config_dir contains instance.yaml, prompt_overrides.md (if present), and the
-    rendered params.override.cfg, exactly as the real deploy step produces them.
+    rendered_config_dir is a fresh disposable temp directory (not inside instance_repo_dir)
+    containing instance.yaml, prompt_overrides.md (if present), and the rendered
+    params.override.cfg - the same three files the real deploy step produces, just written
+    somewhere that isn't the user's persistent local checkout. Caller is responsible for
+    cleaning this up once done with it (e.g. shutil.rmtree) - not deleted automatically here.
     """
     deploy_env = _parse_env_file(instance_repo_dir / "deploy.env")
     chabo_tag = deploy_env.get("CHABO_TAG")
@@ -45,8 +57,7 @@ def render_config(instance_repo_dir: Path) -> Tuple[Path, str]:
         raise ConfigRenderError("deploy.env has no CHABO_TAG - can't determine which orchestrator image to pull")
 
     instance_config_dir = instance_repo_dir / "orchestrator" / "instance_config"
-    rendered_dir = instance_repo_dir / ".rendered" / "orchestrator" / "instance_config"
-    rendered_dir.mkdir(parents=True, exist_ok=True)
+    rendered_dir = Path(tempfile.mkdtemp(prefix="chabo-eval-"))
 
     shutil.copy(instance_config_dir / "instance.yaml", rendered_dir / "instance.yaml")
     prompt_overrides = instance_config_dir / "prompt_overrides.md"
