@@ -353,6 +353,8 @@ Hybrid needs a **fresh** collection — an existing dense-only collection stores
 
 Only `Qdrant/bm25` is tested as `sparse_model`; neural sparse models (e.g. SPLADE) are not supported, since the sparse vector uses Qdrant's IDF modifier, which suits BM25 only. Its assets (stopword lists for 18 languages) are baked into the image, so hybrid startup needs no HF Hub access.
 
+**Tuning (`[retrieval]`).** Hybrid runs a dense search (meaning) and a BM25 search (exact words), each returning `prefetch_top_k` candidates (default 100, must be ≥ `top_k`). Reciprocal Rank Fusion merges the two lists by rank, roughly `dense_weight / (rrf_k + dense rank) + sparse_weight / (rrf_k + sparse rank)`, so documents found by both searches rise to the top. Only the ratio of `dense_weight` / `sparse_weight` matters (default 0.5 / 0.5): favour sparse (e.g. 0.3 / 0.7) when exact terms such as project IDs, acronyms or names matter, favour dense (e.g. 0.7 / 0.3) for paraphrased or cross-language questions. Keep `rrf_k = 60`, the standard value. With the reranker on, fusion decides which `top_k` candidates reach it; the reranker sets the final order.
+
 **Expected parquet schema** — the file must have two columns:
 
 | Column | Type | Description |
