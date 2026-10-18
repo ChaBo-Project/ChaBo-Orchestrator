@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 import threading
+import time
 logger = logging.getLogger(__name__)
 
 from typing import List, Dict, Any, Union, Optional, Tuple
@@ -12,6 +13,7 @@ from gradio_client import Client as GradioClient
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from ..utils import getconfig, get_config_value, _call_hf_endpoint, _acall_hf_endpoint
+from ..logging_setup import mark_retrieval_outcome
 from qdrant_client.http import models as rest
 
 
@@ -295,15 +297,22 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         Returns None when the query has no indexable terms (e.g. all stopwords).
         Request then runs dense-only.
         """
+        sparse_started = time.perf_counter()
         encoder = get_sparse_encoder(self.sparse_model, self.sparse_language)
         # query_embed() returns a generator
         embedding = next(iter(encoder.query_embed(query)), None)
+        duration = time.perf_counter() - sparse_started
         if embedding is None or len(embedding.indices) == 0:
             logger.info(
                 f"Sparse encoder produced no terms for query '{query[:50]}...' - "
-                f"running dense-only for this request."
+                f"running dense-only for this request. duration_s={duration:.3f}"
             )
             return None
+        logger.info(
+            "Sparse encoding completed: duration_s=%.3f terms=%s",
+            duration,
+            len(embedding.indices),
+        )
         # convert fastembed SparseEmbedding object to qdrant friendly 
         return rest.SparseVector(
             indices=[int(i) for i in embedding.indices],
@@ -413,6 +422,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
          When hybrid retrieval enabled, sparse_vector triggers fused dense+sparse query.
          Returns (results, applied_filter, narrowed)."""
 
+        search_started = time.perf_counter()
+        logger.info(
+            "Qdrant search started: mode=%s collection=%s top_k=%s hybrid=%s",
+            self.qdrant_mode,
+            self.qdrant_collection,
+            self.top_k,
+            self.hybrid_enabled and sparse_vector is not None,
+        )
+
         try:
 
             client = self._get_qdrant_client()
@@ -443,7 +461,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     applied_filter = priority_filter
                     narrowed = True
 
-                return [_format_hit(hit) for hit in search_result.points], applied_filter, narrowed
+                results = [_format_hit(hit) for hit in search_result.points]
+                logger.info(
+                    "Qdrant search completed: duration_s=%.3f "
+                    "candidates=%s filter_narrowed=%s",
+                    time.perf_counter() - search_started,
+                    len(results),
+                    narrowed,
+                )
+                return results, applied_filter, narrowed
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Sync Gradio Qdrant search: collection={self.qdrant_collection}, k={self.top_k}")
@@ -457,7 +483,14 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     api_name="/query_points"
                 )
                 if isinstance(result, dict) and "error" in result:
-                    logger.error(f"Gradio wrapper error: {result.get('message', result)}")
+                    logger.error(
+                        "Qdrant search failed: duration_s=%.3f "
+                        "mode=gradio url=%s error=%s",
+                        time.perf_counter() - search_started,
+                        self.qdrant_url,
+                        result.get("message", result),
+                    )
+                    mark_retrieval_outcome("failed")
                     return [], None, False
 
                 # Safeguard: if AND filter returns 0 results and multiple fields were applied,
@@ -476,16 +509,38 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                         api_name="/query_points"
                     )
                     if isinstance(result, dict) and "error" in result:
-                        logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
+                        logger.error(
+                            "Qdrant search failed on filter retry: "
+                            "duration_s=%.3f mode=gradio url=%s error=%s",
+                            time.perf_counter() - search_started,
+                            self.qdrant_url,
+                            result.get("message", result),
+                        )
+                        mark_retrieval_outcome("failed")
                         return [], None, False
                     applied_filter = priority_filter
                     narrowed = True
-
+                logger.info(
+                    "Qdrant search completed: duration_s=%.3f "
+                    "candidates=%s filter_narrowed=%s",
+                    time.perf_counter() - search_started,
+                    len(result),
+                    narrowed,
+                )
                 return result, applied_filter, narrowed
 
         except Exception as e:
-            logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")
+            logger.error(
+                "Qdrant search failed: duration_s=%.3f "
+                "mode=%s url=%s error_type=%s error=%s",
+                time.perf_counter() - search_started,
+                self.qdrant_mode,
+                self.qdrant_url,
+                type(e).__name__,
+                e,
+            )
             self._log_hybrid_error_hint()
+            mark_retrieval_outcome("failed")
             return [], None, False
 
     # --- Qdrant Asynchronous search ---
@@ -494,6 +549,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
          the api_endpoint = 'query_points' similar to native mode.
          When hybrid retrieval is on, sparse_vector triggers the fused dense+sparse query.
          Returns (results, applied_filter, narrowed)."""
+
+        search_started = time.perf_counter()
+        logger.info(
+            "Qdrant search started: mode=%s collection=%s top_k=%s hybrid=%s",
+            self.qdrant_mode,
+            self.qdrant_collection,
+            self.top_k,
+            self.hybrid_enabled and sparse_vector is not None,
+        )
         try:
             client = await self._aget_qdrant_client()
 
@@ -524,27 +588,39 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     applied_filter = priority_filter
                     narrowed = True
 
-                return [_format_hit(hit) for hit in search_result.points], applied_filter, narrowed
+                results = [_format_hit(hit) for hit in search_result.points]
+                logger.info(
+                    "Qdrant search completed: duration_s=%.3f "
+                    "candidates=%s filter_narrowed=%s",
+                    time.perf_counter() - search_started,
+                    len(results),
+                    narrowed,
+                )
+                return results, applied_filter, narrowed
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Async Gradio Qdrant search: collection={self.qdrant_collection}, k={self.top_k}")
                 applied_filter = filters
                 narrowed = False
-                loop = asyncio.get_running_loop()
 
-                # Use run_in_executor to make the synchronous .predict() awaitable
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: client.predict(
-                        query_vector_json=json.dumps(query_vector),
-                        collection_name=self.qdrant_collection,
-                        top_k=self.top_k,
-                        query_filter=json.dumps(filters) if filters else None,
-                        api_name="/query_points"
-                    )
+                # Run the synchronous call while preserving request logging context.
+                result = await asyncio.to_thread(
+                    client.predict,
+                    query_vector_json=json.dumps(query_vector),
+                    collection_name=self.qdrant_collection,
+                    top_k=self.top_k,
+                    query_filter=json.dumps(filters) if filters else None,
+                    api_name="/query_points",
                 )
                 if isinstance(result, dict) and "error" in result:
-                    logger.error(f"Gradio wrapper error: {result.get('message', result)}")
+                    logger.error(
+                        "Qdrant search failed: duration_s=%.3f "
+                        "mode=gradio url=%s error=%s",
+                        time.perf_counter() - search_started,
+                        self.qdrant_url,
+                        result.get("message", result),
+                    )
+                    mark_retrieval_outcome("failed")
                     return [], None, False
 
                 # Safeguard: if AND filter returns 0 results and multiple fields were applied,
@@ -555,27 +631,47 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     logger.info(
                         f"AND filter returned 0 results (Gradio), retrying with priority field only: {priority_filter}"
                     )
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda: client.predict(
-                            query_vector_json=json.dumps(query_vector),
-                            collection_name=self.qdrant_collection,
-                            top_k=self.top_k,
-                            query_filter=json.dumps(priority_filter),
-                            api_name="/query_points"
-                        )
+                    result = await asyncio.to_thread(
+                        client.predict,
+                        query_vector_json=json.dumps(query_vector),
+                        collection_name=self.qdrant_collection,
+                        top_k=self.top_k,
+                        query_filter=json.dumps(priority_filter),
+                        api_name="/query_points",
                     )
                     if isinstance(result, dict) and "error" in result:
-                        logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
+                        logger.error(
+                            "Qdrant search failed on filter retry: "
+                            "duration_s=%.3f mode=gradio url=%s error=%s",
+                            time.perf_counter() - search_started,
+                            self.qdrant_url,
+                            result.get("message", result),
+                        )
+                        mark_retrieval_outcome("failed")
                         return [], None, False
                     applied_filter = priority_filter
                     narrowed = True
-
+                logger.info(
+                    "Qdrant search completed: duration_s=%.3f "
+                    "candidates=%s filter_narrowed=%s",
+                    time.perf_counter() - search_started,
+                    len(result),
+                    narrowed,
+                )
                 return result, applied_filter, narrowed
 
         except Exception as e:
-            logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")
+            logger.error(
+                "Qdrant search failed: duration_s=%.3f "
+                "mode=%s url=%s error_type=%s error=%s",
+                time.perf_counter() - search_started,
+                self.qdrant_mode,
+                self.qdrant_url,
+                type(e).__name__,
+                e,
+            )
             self._log_hybrid_error_hint()
+            mark_retrieval_outcome("failed")
             return [], None, False
 
 
@@ -601,39 +697,97 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         """
         return [_make_document(candidate, rerank_score) for candidate in candidate_results[:self.reranker_top_k]]
 
-    def _rerank(self, query: str, candidate_results: List[Dict[str, Any]]) -> List[Document]:
+    def _rerank(
+        self, query: str, candidate_results: List[Dict[str, Any]]
+    ) -> List[Document]:
         if not self.reranker_enabled:
-            logger.info(f"Reranker disabled - returning top {self.reranker_top_k} candidates in retrieval order")
-            return self._documents_without_rerank(candidate_results, None)
+            documents = self._documents_without_rerank(candidate_results, None)
+            logger.info(
+                "Reranking skipped: reason=disabled candidates=%s documents=%s",
+                len(candidate_results),
+                len(documents),
+            )
+            mark_retrieval_outcome("ok", len(documents))
+            return documents
+
+        rerank_started = time.perf_counter()
+        logger.info("Reranking started: candidates=%s", len(candidate_results))
         try:
-            logger.info(f"Performing Reranking for {len(candidate_results)}")
             reranked = _call_hf_endpoint(
                 self.reranker_endpoint_url,
                 self.hf_token,
                 self._rerank_payload(query, candidate_results),
             )
-            return self._documents_from_rerank(candidate_results, reranked)
+            documents = self._documents_from_rerank(candidate_results, reranked)
         except Exception as e:
-            # FALLBACK: If Reranker fails (503/Timeout), return top k from vector search
-            logger.warning(f"NON-CRITICAL: Reranking failed ({e}). Falling back to vector search order.")
-            return self._documents_without_rerank(candidate_results, "FALLBACK")
+            documents = self._documents_without_rerank(
+                candidate_results, "FALLBACK"
+            )
+            logger.warning(
+                "Reranking failed: duration_s=%.3f error_type=%s error=%s "
+                "fallback=vector_search_order documents=%s",
+                time.perf_counter() - rerank_started,
+                type(e).__name__,
+                e,
+                len(documents),
+            )
+            mark_retrieval_outcome("rerank_fallback", len(documents))
+            return documents
 
-    async def _arerank(self, query: str, candidate_results: List[Dict[str, Any]]) -> List[Document]:
+        logger.info(
+            "Reranking completed: duration_s=%.3f candidates=%s documents=%s",
+            time.perf_counter() - rerank_started,
+            len(candidate_results),
+            len(documents),
+        )
+        mark_retrieval_outcome("ok", len(documents))
+        return documents
+
+    async def _arerank(
+        self, query: str, candidate_results: List[Dict[str, Any]]
+    ) -> List[Document]:
         if not self.reranker_enabled:
-            logger.info(f"Reranker disabled - returning top {self.reranker_top_k} candidates in retrieval order")
-            return self._documents_without_rerank(candidate_results, None)
+            documents = self._documents_without_rerank(candidate_results, None)
+            logger.info(
+                "Reranking skipped: reason=disabled candidates=%s documents=%s",
+                len(candidate_results),
+                len(documents),
+            )
+            mark_retrieval_outcome("ok", len(documents))
+            return documents
+
+        rerank_started = time.perf_counter()
+        logger.info("Reranking started: candidates=%s", len(candidate_results))
         try:
-            logger.info(f"Async Reranking for {len(candidate_results)} candidates")
             reranked = await _acall_hf_endpoint(
                 self.reranker_endpoint_url,
                 self.hf_token,
                 self._rerank_payload(query, candidate_results),
             )
-            return self._documents_from_rerank(candidate_results, reranked)
+            documents = self._documents_from_rerank(candidate_results, reranked)
         except Exception as e:
-            # FALLBACK: Return top k from initial vector search
-            logger.warning(f"NON-CRITICAL: Async Reranking failed ({e}). Returning search results.")
-            return self._documents_without_rerank(candidate_results, "FALLBACK")
+            documents = self._documents_without_rerank(
+                candidate_results, "FALLBACK"
+            )
+            logger.warning(
+                "Reranking failed: duration_s=%.3f error_type=%s error=%s "
+                "fallback=vector_search_order documents=%s",
+                time.perf_counter() - rerank_started,
+                type(e).__name__,
+                e,
+                len(documents),
+            )
+            mark_retrieval_outcome("rerank_fallback", len(documents))
+            return documents
+
+        logger.info(
+            "Reranking completed: duration_s=%.3f candidates=%s documents=%s",
+            time.perf_counter() - rerank_started,
+            len(candidate_results),
+            len(documents),
+        )
+        mark_retrieval_outcome("ok", len(documents))
+        return documents
 
     # --- Core Retrieval Orchestration (LangChain Required Method) ---
     def _get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
@@ -641,7 +795,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         Executes the three-step pipeline: Embed -> Search -> Rerank.
         """
         # A. Embed Query (Call HF Endpoint 1)
-        logger.info(f"Emebedding query: {query[:50]}....")
+        embedding_started = time.perf_counter()
+        logger.info("Embedding started")
         try:
 
             embed_payload = {"inputs": query}
@@ -651,8 +806,18 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 embed_payload
             )
             query_vector = embed_response[0]
+            logger.info(
+                "Embedding completed: duration_s=%.3f",
+                time.perf_counter() - embedding_started,
+            )
         except Exception as e:
-            logger.error(f"CRITICAL: Embedding Failed. Details: {e}")
+            logger.error(
+                "Embedding failed: duration_s=%.3f error_type=%s error=%s",
+                time.perf_counter() - embedding_started,
+                type(e).__name__,
+                e,
+            )
+            mark_retrieval_outcome("failed")
             return []
 
         sparse_vector = self._embed_sparse(query) if self.hybrid_enabled else None
@@ -663,7 +828,9 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         )
         logger.debug(f"Candidate Results {candidate_results}")
         if not candidate_results:
-            logger.info(f"No candidates found for query: {query[:50]}...")
+            # Also reached after a failed search, which is already recorded.
+            logger.info(f"No documents retrieved for query: {query[:50]}...")
+            mark_retrieval_outcome("empty")
             return []
 
         # C. Rerank Documents (Call HF Endpoint 2), with fallback in case of error
@@ -675,7 +842,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         [ASYNC METHOD IMPLEMENTATION] Executes the three-step pipeline: Embed -> Search -> Rerank.
         """
         # A. Embed Query (Call HF Endpoint 1)
-        logger.info(f"Emebedding query: {query[:50]}....")
+        embedding_started = time.perf_counter()
+        logger.info("Embedding started")
         try:
             embed_payload = {"inputs": query}
             embed_response = await _acall_hf_endpoint(
@@ -684,8 +852,18 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 embed_payload
             )
             query_vector = embed_response[0]
+            logger.info(
+                "Embedding completed: duration_s=%.3f",
+                time.perf_counter() - embedding_started,
+            )
         except Exception as e:
-            logger.error(f"CRITICAL: Embedding Failed. Details: {e}")
+            logger.error(
+                "Embedding failed: duration_s=%.3f error_type=%s error=%s",
+                time.perf_counter() - embedding_started,
+                type(e).__name__,
+                e,
+            )
+            mark_retrieval_outcome("failed")
             return []
 
         sparse_vector = await asyncio.to_thread(self._embed_sparse, query) if self.hybrid_enabled else None
@@ -697,7 +875,9 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         logger.debug(f"Candidate Results {candidate_results}")
 
         if not candidate_results:
-            logger.info(f"No candidates found for query: {query[:50]}...")
+            # Also reached after a failed search, which is already recorded.
+            logger.info(f"No documents retrieved for query: {query[:50]}...")
+            mark_retrieval_outcome("empty")
             return []
 
         # C. Rerank Documents (Call HF Endpoint 2)

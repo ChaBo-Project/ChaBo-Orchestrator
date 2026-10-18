@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from components.utils import load_instance_yaml
+from components.logging_setup import mark_blocked
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +228,13 @@ def load_compiled_blocklist(path: str) -> CompiledBlocklist:
     return compiled
 
 
+def _match_context(match: "re.Match", width: int = 20) -> str:
+    """Up to `width` chars either side of a match, from the string it was found in
+    (the normalized buffer for whole-word matches)."""
+    text = match.string
+    return text[max(0, match.start() - width):match.end() + width]
+
+
 class StreamingBlocklistFilter:
     """
     Stateful per-request streaming blocklist filter.
@@ -262,6 +270,13 @@ class StreamingBlocklistFilter:
         n = len(text)
         for m in pattern.finditer(text):
             if at_end or m.end() < n:
+                logger.warning(
+                    "Output blocked: match_type=whole_word "
+                    "matched_text=%r context=%r at_stream_end=%s",
+                    m.group(0),
+                    _match_context(m),
+                    at_end,
+                )
                 return True
         return False
 
@@ -274,8 +289,17 @@ class StreamingBlocklistFilter:
         always definitive (no right-boundary requirement → no tentative case)."""
         if self.c.boundary_re is not None and self._match(self.c.boundary_re, normalize_arabic(text), at_end):
             return True
-        if self.c.substring_re is not None and self.c.substring_re.search(text):
-            return True
+        if self.c.substring_re is not None:
+            match = self.c.substring_re.search(text)
+            if match is not None:
+                logger.warning(
+                    "Output blocked: match_type=substring "
+                    "matched_text=%r context=%r at_stream_end=%s",
+                    match.group(0),
+                    _match_context(match),
+                    at_end,
+                )
+                return True
         return False
 
     def _flush_safe(self) -> str:
@@ -325,6 +349,7 @@ class StreamingBlocklistFilter:
         self.buf += chunk
         if self._scan(self.buf, at_end=False):
             self.blocked = True
+            mark_blocked("output_blocklist")
             self.buf = ""
             return self.notice, True
         return self._flush_safe(), False
@@ -335,6 +360,7 @@ class StreamingBlocklistFilter:
             return "", True
         if self._scan(self.buf, at_end=True):
             self.blocked = True
+            mark_blocked("output_blocklist")
             self.buf = ""
             return self.notice, True
         emit, self.buf = self.buf, ""

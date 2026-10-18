@@ -15,6 +15,7 @@ the renderer differ per frontend.
 import base64
 import logging
 import asyncio
+from contextlib import aclosing
 from typing import Dict, Any, List, Optional, Tuple
 
 from components.utils import build_conversation_context
@@ -206,6 +207,11 @@ async def consume_stream(
 
             await asyncio.sleep(0)
     finally:
+        # Close the pipeline when we stop early (e.g. a guard hit), so the
+        # graph and its LLM stream stop now instead of finishing in the background.
+        aclose = getattr(process_iter, "aclose", None)
+        if aclose is not None:
+            await aclose()
         if classifier is not None:
             await classifier.aclose()  # cancel any incoming (in-progress) classifications
 
@@ -277,18 +283,21 @@ async def process_query_streaming(
         initial_state["filename"] = filename
 
     try:
-        async for output in compiled_graph.astream(initial_state, stream_mode="custom"):
-            if output.get("event") == "data":
-                yield {"type": "data", "content": output["data"]}
-            elif output.get("event") == "filters_applied":
-                yield {"type": "filters_applied", "content": output["data"]}
-            elif output.get("event") == "final_answer":
-                # Handle final_answer event with webSources
-                sources = output["data"].get("webSources", [])
-                if sources:
-                    yield {"type": "sources", "content": sources}
-            elif output.get("event") == "error":
-                yield {"type": "error", "content": output["data"].get("error", "Unknown error")}
+        graph_stream = compiled_graph.astream(initial_state, stream_mode="custom")
+        # aclosing: if our consumer stops early, stop the graph (and its LLM call) too.
+        async with aclosing(graph_stream):
+            async for output in graph_stream:
+                if output.get("event") == "data":
+                    yield {"type": "data", "content": output["data"]}
+                elif output.get("event") == "filters_applied":
+                    yield {"type": "filters_applied", "content": output["data"]}
+                elif output.get("event") == "final_answer":
+                    # Handle final_answer event with webSources
+                    sources = output["data"].get("webSources", [])
+                    if sources:
+                        yield {"type": "sources", "content": sources}
+                elif output.get("event") == "error":
+                    yield {"type": "error", "content": output["data"].get("error", "Unknown error")}
 
         yield {"type": "end", "content": ""}
 

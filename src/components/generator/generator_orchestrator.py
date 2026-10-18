@@ -1,9 +1,12 @@
 import logging
+import asyncio
+from contextlib import aclosing
 # Set up logger
 logger = logging.getLogger(__name__)
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 
 # LangChain imports
+from ..logging_setup import mark_generation_outcome
 from ..utils import getconfig, get_config_value
 from ..llm import LLMClient, build_llm_client
 from .prompts import build_system_prompt, build_messages
@@ -73,22 +76,57 @@ class Generator:
 
 
     async def _call_llm(self, messages: list) -> str:
-        """Provider-agnostic LLM call (non-streaming). Delegates to the LLMClient."""
-        return await self.llm_client.ainvoke(messages)
+        """Call the LLM and record its generation outcome."""
+        mark_generation_outcome("running")
+        try:
+            answer = await self.llm_client.ainvoke(messages)
+        except asyncio.CancelledError:
+            mark_generation_outcome("cancelled")
+            raise
+        except Exception:
+            mark_generation_outcome("failed")
+            raise
+        else:
+            mark_generation_outcome("succeeded")
+            return answer
 
-    async def _call_llm_streaming(self, messages: list) -> AsyncGenerator[str, None]:
-        """Provider-agnostic streaming LLM call. Delegates to the LLMClient."""
-        async for chunk in self.llm_client.astream(messages):
-            yield chunk
+    async def _call_llm_streaming(
+        self, messages: list
+    ) -> AsyncGenerator[str, None]:
+        """Stream LLM output and record its generation outcome.
+
+        A provider error (already logged by LLMClient) is streamed to the
+        consumer as an "Error: ..." chunk instead of being raised.
+        """
+        mark_generation_outcome("running")
+        try:
+            # aclosing: when our consumer stops early, close the LLM stream
+            # now (inside this request) rather than at garbage collection.
+            async with aclosing(self.llm_client.astream(messages)) as stream:
+                async for chunk in stream:
+                    yield chunk
+        except asyncio.CancelledError:
+            mark_generation_outcome("cancelled")
+            raise
+        except GeneratorExit:
+            # The consumer closed the stream before it ended.
+            mark_generation_outcome("stopped_early")
+            raise
+        except Exception as e:
+            mark_generation_outcome("failed")
+            yield f"Error: {str(e)}"
+        else:
+            mark_generation_outcome("succeeded")
 
     # Convenience pass-throughs so a Generator can stand in wherever an LLMClient is expected.
     async def ainvoke(self, messages: list) -> str:
-        return await self.llm_client.ainvoke(messages)
+        return await self._call_llm(messages)
 
     async def astream(self, messages: list) -> AsyncGenerator[str, None]:
-        async for chunk in self.llm_client.astream(messages):
-            yield chunk
-    
+        async with aclosing(self._call_llm_streaming(messages)) as stream:
+            async for chunk in stream:
+                yield chunk
+
     # # --- Response Post-Processing Method (Centralized Logic) ---
 
     # def _process_final_response(self, answer: str, processed_results: List[Dict[str, Any]], chatui_format: bool) -> Union[str, Dict[str, Any]]:
@@ -170,14 +208,15 @@ class Generator:
 
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""
-            async for chunk in self._call_llm_streaming(messages):
-                accumulated_response += chunk
-                
-                # Yield the raw text chunks immediately
-                if chatui_format:
-                    yield {"event": "data", "data": chunk}
-                else:
-                    yield chunk
+            async with aclosing(self._call_llm_streaming(messages)) as stream:
+                async for chunk in stream:
+                    accumulated_response += chunk
+
+                    # Yield the raw text chunks immediately
+                    if chatui_format:
+                        yield {"event": "data", "data": chunk}
+                    else:
+                        yield chunk
 
             # 4. Final Post-Processing (after stream is complete)
             cleaned_response = clean_citations(accumulated_response)

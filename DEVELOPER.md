@@ -75,6 +75,7 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │  generator/generator_orchestrator.py   orchestration/telemetry.py   │
 │  orchestration/streaming.py (core)     utils.py                      │
 │  api/ (openai_compat)                  rewriter/db_context.py        │
+│  logging_setup.py                                                    │
 │  guardrails/ (input_guard, output_guard, output_classification,      │
 │               llm_guard)                                             │
 └──────────────────────────────────────────────────────────────────────┘
@@ -107,6 +108,7 @@ src/
 ├── main.py                                     # FastAPI app, /v1 + LangServe route registration, startup validation of filterable_fields vs instance.yaml
 └── components/
     ├── utils.py                                # Shared: getconfig, get_config_value, build_conversation_context, HTTP helpers (_call_hf_endpoint, _acall_hf_endpoint)
+    ├── logging_setup.py                        # Log format, RUN ids, ExecutionLoggingMiddleware, optional log files + retention (LOG_* env) — INFRASTRUCTURE
     ├── api/                                     # Frontend-agnostic HTTP surface — INFRASTRUCTURE
     │   └── openai_compat.py                    # /v1/chat/completions + /v1/models (OpenAI-compatible), shares consume_stream/process_query_streaming with Chabo-ChatUI
     ├── llm/
@@ -341,3 +343,159 @@ Subclass `BaseRenderer` in `renderers.py` (text / notice / footnote / sources / 
 | `nodes.py` lines ~290–390 | Large block of commented-out old `retrieve_node` implementations — dead code, pending cleanup |
 | `streaming.py` | `process_query_streaming` is functional but flagged for future rework toward an agentic workflow |
 | `state.py` `raw_context` field | Listed as "Alias for backward compatibility" — not written by any current node, candidate for removal |
+
+## Logging and troubleshooting
+
+Application logs include a UTC timestamp, severity, process ID (PID),
+request correlation ID (RUN), logger name and message.
+
+### Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| LOG_LEVEL | INFO | DEBUG, INFO, WARNING, ERROR or CRITICAL |
+| LOG_TO_FILE | false | `true` also writes process and request log files to LOG_DIR. Default: console only |
+| LOG_DIR | logs | Directory for log files when LOG_TO_FILE=true. Empty means the default |
+| LOG_COLOR | auto | auto, always or never; colors ERROR and CRITICAL console messages red |
+
+Set these variables in the process environment before starting the Orchestrator
+(they are read before `params.cfg` is loaded, so they are env-only).
+DEBUG may include full LLM context; use it only for troubleshooting.
+
+**Log content:** at INFO, logs (console and files) contain excerpts of the user's
+query and of the rewritten query. Treat log files as user data.
+
+### Log files (LOG_TO_FILE=true)
+
+With LOG_TO_FILE=true, startup fails if LOG_DIR cannot be created or written
+(no silent fallback to console). A request whose own log file cannot be
+created later still runs, with a console warning.
+
+Each process creates `process-<PID>-<unique-id>/process.log`.
+Each HTTP request except `/health` creates
+`run-<PID>-<unique-id>/execution.log`.
+
+Process logs contain startup and request messages. Request files isolate
+individual executions, including streamed responses and Gradio predict
+calls made through `asyncio.to_thread()`.
+
+Console output and process files may interleave concurrent requests.
+Use the separate request files when investigating one execution.
+
+**In a container**, LOG_DIR is the mount point (the image does not declare a
+volume; the deployment mounts one):
+
+```bash
+docker run -e LOG_TO_FILE=true -e LOG_DIR=/app/logs \
+  -v /var/log/chabo:/app/logs ... chabo
+```
+
+The host directory must be writable by the container user. If the image runs
+as a non-root user (uid 1000), `chown 1000 /var/log/chabo` on the host first.
+
+### Request IDs and summaries
+
+A valid incoming `X-Request-ID` becomes the RUN value and is returned in
+the response header. Accepted IDs contain 1–128 ASCII letters, digits,
+dots, underscores or hyphens. Missing, invalid or duplicate headers receive
+a generated ID. Reused IDs still get separate execution directories.
+`/health` (with or without a trailing slash) bypasses request-ID handling and
+request-file creation.
+
+Request summaries include method, path, HTTP status, elapsed seconds,
+response completion, execution outcome, generation outcome, retrieval
+outcome, document count and which guard blocked the request.
+
+`outcome`:
+- `finished`: the application returned.
+- `client_disconnected`: the client went away before the response completed.
+- `failed`: an unhandled exception. Before the response started, the
+  middleware logs the traceback once and answers HTTP 500 itself, so the 500
+  keeps its RUN id and `x-request-id`.
+- `cancelled`: the request task was cancelled.
+
+HTTP 200 and `response_complete=True` do not guarantee successful answer
+generation: a handled LLM failure can still complete the response stream.
+
+`generation_outcome` tracks the answer-generation LLM call:
+- `not_started`: the tracked LLM call was not reached.
+- `running`: the call started but no terminal outcome was recorded.
+- `succeeded`: the LLM call completed; answer quality and citations
+  are not assessed by this field.
+- `failed`: a generation failure was recorded.
+- `cancelled`: cancellation reached the tracked generation call (e.g. the
+  output guard stopped the stream).
+- `stopped_early`: the consumer closed the generation stream.
+
+A recorded generation failure is preserved for the rest of the request.
+The middleware also emits a WARNING when a request ends with that failure.
+
+`retrieval_outcome` (with `documents`, the count passed to generation):
+- `not_started`: retrieval was not reached (e.g. the input guard blocked).
+- `ok`: documents were retrieved (and reranked, or reranking is disabled).
+- `empty`: the search succeeded but matched nothing.
+- `failed`: embedding or Qdrant failed; the answer was generated without
+  documents. A failure is preserved for the rest of the request.
+- `rerank_fallback`: reranking failed; documents are in vector-search order.
+
+`failed` and `rerank_fallback` also emit a WARNING
+(`Request ended with degraded retrieval`), since such requests still end with
+HTTP 200 and `generation_outcome=succeeded`.
+
+`blocked_by` names the first guard that blocked the request: `input_guard`,
+`output_blocklist`, `output_classifier` or `output_guidelines` (`-` if none).
+Output-guard blocks stop generation, so they usually show
+`generation_outcome=cancelled`.
+
+### Stage timings
+
+Embedding, sparse (BM25) encoding, Qdrant search, reranking and LLM calls log
+elapsed seconds. Qdrant search lines show `hybrid=True` only when a sparse
+vector was actually sent (BM25 can fall back to dense-only per request).
+Qdrant search timing includes client initialization and filter retries.
+Reranking logs distinguish completion, disabled mode and failure with
+fallback to vector-search order.
+
+LLM lines name the task (`task=generation`, `query_rewrite`,
+`filter_extraction`, `input_guard`, `output_classification`). Streaming LLM
+timing includes time spent yielding chunks to the consumer; `first_chunk_s` is
+the time to the first content chunk (`-` if none arrived), which separates a
+slow start from slow token output. A stream the
+consumer stops early logs `LLM streaming ended early` with its reason and
+`output_chars`.
+
+Routine httpx and httpcore messages are suppressed at INFO.
+Set LOG_LEVEL=DEBUG to restore detailed HTTP diagnostics.
+
+Confirmed blocklist hits log the matched text, match type and up to 20
+characters of context either side at WARNING. Output-classifier blocks are
+also WARNING. Whole-word matches (and their
+context) use normalized, lowercased text, which may differ from the original
+answer. Tentative matches do not produce blocking warnings.
+
+### Rotation and retention
+
+Files rotate around 5 MiB. Process logs keep three backups; request logs
+keep one backup.
+
+Completed directories receive a `.finished` marker after their handler
+closes. Process markers are written during normal Python exit.
+
+Cleanup runs at startup and when logged requests begin, at most once per
+minute per process and log directory, off the event loop. It removes matching
+directories whose finished marker is older than seven days.
+
+Directories without a marker (left by a crashed or killed process) are removed
+seven days after their last write, unless their PID belongs to another running
+process. Several containers sharing one LOG_DIR do not share a PID namespace,
+so give each its own directory.
+
+Uncaught main-thread exceptions after logging configuration are recorded
+through the configured handlers.
+
+### Server logging
+
+The entry point starts Uvicorn with `log_config=None` and the configured
+log level so it uses the application logging configuration. This applies only
+when started as `python src/main.py` (as in the Dockerfile); `uvicorn main:app`
+uses Uvicorn's own logging configuration.

@@ -19,3 +19,4 @@ test_input_guard.py
 test_input_guard_node.py
 test_output_guard.py
 test_guardrails.py
+/logs/

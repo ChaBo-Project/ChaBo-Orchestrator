@@ -19,3 +19,4 @@ chabo_env/
 
 .env
 .env.local
+logs/

@@ -162,3 +162,24 @@ def test_a_blocked_openai_stream_carries_no_citations_frame():
         renderer=OpenAIChunkRenderer("chabo"),
     )
     assert not any("citations" in frame for frame in _frames(pieces))
+
+
+def test_a_blocked_stream_closes_the_pipeline_immediately():
+    # The pipeline (graph + LLM stream) must stop when the answer is blocked,
+    # not keep generating in the background.
+    closed = []
+
+    async def pipeline():
+        try:
+            yield {"type": "data", "content": "a badword here "}
+            yield {"type": "data", "content": "never consumed"}
+        finally:
+            closed.append(True)
+
+    async def run():
+        async for _ in consume_stream(pipeline(), _blocklist_filter()):
+            pass
+        # Checked before asyncio.run() finalizes leftover generators.
+        return list(closed)
+
+    assert asyncio.run(run()) == [True]
