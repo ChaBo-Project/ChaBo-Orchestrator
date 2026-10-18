@@ -219,6 +219,10 @@ Pass API keys as environment variables at runtime:
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key |
 | `COHERE_API_KEY` | If using Cohere | Cohere API key |
 | `AZURE_API_KEY` | If using Azure OpenAI | Azure OpenAI API key (shared by all tasks) |
+| `LOG_LEVEL` | No (default `INFO`) | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
+| `LOG_TO_FILE` | No (default `false`) | `true` also writes per-process and per-request log files to `LOG_DIR` (default: console only). Startup fails if `LOG_DIR` isn't writable |
+| `LOG_DIR` | No (default `logs`) | Log file directory, and the mount point in a container (e.g. `/app/logs`) |
+| `LOG_COLOR` | No (default `auto`) | `auto`, `always` or `never` |
 
 **Azure:** every task using `provider = azure` needs its own endpoint: `[generator] AZURE_ENDPOINT` and `llm_azure_endpoint` in `[metadata_filters]` / `[query_rewriter]` / `[input_guard]` / `[output_guard]` (env: `GENERATOR_AZURE_ENDPOINT`, `FILTER_EXTRACTION_LLM_AZURE_ENDPOINT`, `QUERY_REWRITE_LLM_AZURE_ENDPOINT`, `INPUT_GUARD_LLM_AZURE_ENDPOINT`, `OUTPUT_CLASSIFICATION_LLM_AZURE_ENDPOINT`). It must be a full `https://` URL; ChaBo refuses to start otherwise, to avoid requests (and the Azure key) going to api.openai.com, the OpenAI SDK's default.
 
@@ -231,6 +235,19 @@ docker run -p 7860:7860 \
   -e QDRANT_API_KEY=your_key \
   chabo
 ```
+
+To keep log files on the host (logs go to the console only by default):
+
+```bash
+docker run -p 7860:7860 \
+  -e HF_TOKEN=your_token \
+  -e QDRANT_API_KEY=your_key \
+  -e LOG_TO_FILE=true -e LOG_DIR=/app/logs \
+  -v /var/log/chabo:/app/logs \
+  chabo
+```
+
+The host directory must be writable by the container user. Log files contain excerpts of user queries; see DEVELOPER.md "Logging and troubleshooting".
 
 ## Instance Configuration
 

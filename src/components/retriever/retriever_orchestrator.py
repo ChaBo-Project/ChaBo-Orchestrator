@@ -13,6 +13,7 @@ from gradio_client import Client as GradioClient
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from ..utils import getconfig, get_config_value, _call_hf_endpoint, _acall_hf_endpoint
+from ..logging_setup import mark_retrieval_outcome
 from qdrant_client.http import models as rest
 
 
@@ -296,15 +297,22 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         Returns None when the query has no indexable terms (e.g. all stopwords).
         Request then runs dense-only.
         """
+        sparse_started = time.perf_counter()
         encoder = get_sparse_encoder(self.sparse_model, self.sparse_language)
         # query_embed() returns a generator
         embedding = next(iter(encoder.query_embed(query)), None)
+        duration = time.perf_counter() - sparse_started
         if embedding is None or len(embedding.indices) == 0:
             logger.info(
                 f"Sparse encoder produced no terms for query '{query[:50]}...' - "
-                f"running dense-only for this request."
+                f"running dense-only for this request. duration_s={duration:.3f}"
             )
             return None
+        logger.info(
+            "Sparse encoding completed: duration_s=%.3f terms=%s",
+            duration,
+            len(embedding.indices),
+        )
         # convert fastembed SparseEmbedding object to qdrant friendly 
         return rest.SparseVector(
             indices=[int(i) for i in embedding.indices],
@@ -416,10 +424,11 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
 
         search_started = time.perf_counter()
         logger.info(
-            "Qdrant search started: mode=%s collection=%s top_k=%s",
+            "Qdrant search started: mode=%s collection=%s top_k=%s hybrid=%s",
             self.qdrant_mode,
             self.qdrant_collection,
             self.top_k,
+            self.hybrid_enabled and sparse_vector is not None,
         )
 
         try:
@@ -476,10 +485,12 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 if isinstance(result, dict) and "error" in result:
                     logger.error(
                         "Qdrant search failed: duration_s=%.3f "
-                        "mode=gradio error=%s",
+                        "mode=gradio url=%s error=%s",
                         time.perf_counter() - search_started,
+                        self.qdrant_url,
                         result.get("message", result),
                     )
+                    mark_retrieval_outcome("failed")
                     return [], None, False
 
                 # Safeguard: if AND filter returns 0 results and multiple fields were applied,
@@ -500,10 +511,12 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     if isinstance(result, dict) and "error" in result:
                         logger.error(
                             "Qdrant search failed on filter retry: "
-                            "duration_s=%.3f mode=gradio error=%s",
+                            "duration_s=%.3f mode=gradio url=%s error=%s",
                             time.perf_counter() - search_started,
+                            self.qdrant_url,
                             result.get("message", result),
                         )
+                        mark_retrieval_outcome("failed")
                         return [], None, False
                     applied_filter = priority_filter
                     narrowed = True
@@ -519,13 +532,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         except Exception as e:
             logger.error(
                 "Qdrant search failed: duration_s=%.3f "
-                "mode=%s error_type=%s error=%s",
+                "mode=%s url=%s error_type=%s error=%s",
                 time.perf_counter() - search_started,
                 self.qdrant_mode,
+                self.qdrant_url,
                 type(e).__name__,
                 e,
             )
             self._log_hybrid_error_hint()
+            mark_retrieval_outcome("failed")
             return [], None, False
 
     # --- Qdrant Asynchronous search ---
@@ -537,10 +552,11 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
 
         search_started = time.perf_counter()
         logger.info(
-            "Qdrant search started: mode=%s collection=%s top_k=%s",
+            "Qdrant search started: mode=%s collection=%s top_k=%s hybrid=%s",
             self.qdrant_mode,
             self.qdrant_collection,
             self.top_k,
+            self.hybrid_enabled and sparse_vector is not None,
         )
         try:
             client = await self._aget_qdrant_client()
@@ -599,10 +615,12 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 if isinstance(result, dict) and "error" in result:
                     logger.error(
                         "Qdrant search failed: duration_s=%.3f "
-                        "mode=gradio error=%s",
+                        "mode=gradio url=%s error=%s",
                         time.perf_counter() - search_started,
+                        self.qdrant_url,
                         result.get("message", result),
                     )
+                    mark_retrieval_outcome("failed")
                     return [], None, False
 
                 # Safeguard: if AND filter returns 0 results and multiple fields were applied,
@@ -624,10 +642,12 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     if isinstance(result, dict) and "error" in result:
                         logger.error(
                             "Qdrant search failed on filter retry: "
-                            "duration_s=%.3f mode=gradio error=%s",
+                            "duration_s=%.3f mode=gradio url=%s error=%s",
                             time.perf_counter() - search_started,
+                            self.qdrant_url,
                             result.get("message", result),
                         )
+                        mark_retrieval_outcome("failed")
                         return [], None, False
                     applied_filter = priority_filter
                     narrowed = True
@@ -643,13 +663,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         except Exception as e:
             logger.error(
                 "Qdrant search failed: duration_s=%.3f "
-                "mode=%s error_type=%s error=%s",
+                "mode=%s url=%s error_type=%s error=%s",
                 time.perf_counter() - search_started,
                 self.qdrant_mode,
+                self.qdrant_url,
                 type(e).__name__,
                 e,
             )
             self._log_hybrid_error_hint()
+            mark_retrieval_outcome("failed")
             return [], None, False
 
 
@@ -685,6 +707,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 len(candidate_results),
                 len(documents),
             )
+            mark_retrieval_outcome("ok", len(documents))
             return documents
 
         rerank_started = time.perf_counter()
@@ -708,6 +731,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 e,
                 len(documents),
             )
+            mark_retrieval_outcome("rerank_fallback", len(documents))
             return documents
 
         logger.info(
@@ -716,6 +740,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             len(candidate_results),
             len(documents),
         )
+        mark_retrieval_outcome("ok", len(documents))
         return documents
 
     async def _arerank(
@@ -728,6 +753,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 len(candidate_results),
                 len(documents),
             )
+            mark_retrieval_outcome("ok", len(documents))
             return documents
 
         rerank_started = time.perf_counter()
@@ -751,6 +777,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 e,
                 len(documents),
             )
+            mark_retrieval_outcome("rerank_fallback", len(documents))
             return documents
 
         logger.info(
@@ -759,6 +786,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             len(candidate_results),
             len(documents),
         )
+        mark_retrieval_outcome("ok", len(documents))
         return documents
 
     # --- Core Retrieval Orchestration (LangChain Required Method) ---
@@ -789,6 +817,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 type(e).__name__,
                 e,
             )
+            mark_retrieval_outcome("failed")
             return []
 
         sparse_vector = self._embed_sparse(query) if self.hybrid_enabled else None
@@ -799,7 +828,9 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         )
         logger.debug(f"Candidate Results {candidate_results}")
         if not candidate_results:
-            logger.info(f"No candidates found for query: {query[:50]}...")
+            # Also reached after a failed search, which is already recorded.
+            logger.info(f"No documents retrieved for query: {query[:50]}...")
+            mark_retrieval_outcome("empty")
             return []
 
         # C. Rerank Documents (Call HF Endpoint 2), with fallback in case of error
@@ -832,6 +863,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 type(e).__name__,
                 e,
             )
+            mark_retrieval_outcome("failed")
             return []
 
         sparse_vector = await asyncio.to_thread(self._embed_sparse, query) if self.hybrid_enabled else None
@@ -843,7 +875,9 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         logger.debug(f"Candidate Results {candidate_results}")
 
         if not candidate_results:
-            logger.info(f"No candidates found for query: {query[:50]}...")
+            # Also reached after a failed search, which is already recorded.
+            logger.info(f"No documents retrieved for query: {query[:50]}...")
+            mark_retrieval_outcome("empty")
             return []
 
         # C. Rerank Documents (Call HF Endpoint 2)

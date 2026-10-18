@@ -8,6 +8,9 @@ from components.logging_setup import (
     ExecutionLoggingMiddleware,
 )
 
+# Configure logging before importing anything else: the imports below build
+# loggers and log at import time, and startup errors (bad config, missing env)
+# must reach the configured handlers. Keep this block above the other imports.
 configure_logging()
 
 from fastapi import FastAPI
@@ -317,6 +320,9 @@ if __name__ == "__main__":
     logger.info(f"Starting ChaBo RAG Orchestrator on {host}:{port}")
     logger.info(f"API Docs: http://{host}:{port}/docs")
 
+    # log_config=None keeps uvicorn on the logging configured above. This only
+    # applies when started as `python src/main.py` (as in the Dockerfile);
+    # `uvicorn main:app` applies uvicorn's own logging config instead.
     uvicorn.run(
         app,
         host=host,

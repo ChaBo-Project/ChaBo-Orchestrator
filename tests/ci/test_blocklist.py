@@ -96,19 +96,12 @@ def test_a_max_length_term_at_the_force_cut_boundary_is_still_caught():
     assert hit2 is True
     assert "[blocked]" in text
 
-def test_confirmed_hit_logs_matched_term_once(caplog):
-    from components.guardrails.output_guard import (
-        compile_blocklist,
-        StreamingBlocklistFilter,
-    )
 
-    guard = StreamingBlocklistFilter(
-        compile_blocklist({"en": ["testword"]}),
-        notice="BLOCKED",
-    )
+def test_confirmed_hit_logs_matched_term_once(caplog):
+    guard = _filter({"en": ["testword"]}, notice="BLOCKED")
 
     with caplog.at_level("WARNING"):
-        assert guard.feed("testword ") == ("BLOCKED", True)
+        assert guard.feed("Some leading text testword ") == ("BLOCKED", True)
         guard.feed("more text")
         guard.flush_final()
 
@@ -120,18 +113,12 @@ def test_confirmed_hit_logs_matched_term_once(caplog):
     assert len(hits) == 1
     assert "match_type=whole_word" in hits[0]
     assert "matched_text='testword'" in hits[0]
+    # Whole-word context comes from the normalized (lowercased) buffer.
+    assert "context='some leading text testword '" in hits[0]
 
 
 def test_tentative_match_extended_into_word_does_not_log(caplog):
-    from components.guardrails.output_guard import (
-        compile_blocklist,
-        StreamingBlocklistFilter,
-    )
-
-    guard = StreamingBlocklistFilter(
-        compile_blocklist({"en": ["testword"]}),
-        notice="BLOCKED",
-    )
+    guard = _filter({"en": ["testword"]}, notice="BLOCKED")
 
     with caplog.at_level("WARNING"):
         assert guard.feed("testword")[1] is False
@@ -145,15 +132,7 @@ def test_tentative_match_extended_into_word_does_not_log(caplog):
 
 
 def test_final_buffer_hit_logs_stream_end(caplog):
-    from components.guardrails.output_guard import (
-        compile_blocklist,
-        StreamingBlocklistFilter,
-    )
-
-    guard = StreamingBlocklistFilter(
-        compile_blocklist({"en": ["testword"]}),
-        notice="BLOCKED",
-    )
+    guard = _filter({"en": ["testword"]}, notice="BLOCKED")
 
     with caplog.at_level("WARNING"):
         assert guard.feed("testword")[1] is False
@@ -164,15 +143,7 @@ def test_final_buffer_hit_logs_stream_end(caplog):
 
 
 def test_substring_hit_logs_matched_text(caplog):
-    from components.guardrails.output_guard import (
-        compile_blocklist,
-        StreamingBlocklistFilter,
-    )
-
-    guard = StreamingBlocklistFilter(
-        compile_blocklist({"zh": ["测试"]}),
-        notice="BLOCKED",
-    )
+    guard = _filter({"zh": ["测试"]}, notice="BLOCKED")
 
     with caplog.at_level("WARNING"):
         assert guard.feed("这是测试文本") == ("BLOCKED", True)
@@ -180,3 +151,17 @@ def test_substring_hit_logs_matched_text(caplog):
     message = caplog.records[-1].getMessage()
     assert "match_type=substring" in message
     assert "matched_text='测试'" in message
+    assert "context='这是测试文本'" in message
+
+
+def test_hit_context_is_limited_to_twenty_chars_each_side(caplog):
+    guard = _filter({"en": ["testword"]}, notice="BLOCKED")
+    before = "a" * 30 + " "
+    after = " " + "b" * 30
+
+    with caplog.at_level("WARNING"):
+        guard.feed(before + "testword" + after)
+
+    message = caplog.records[-1].getMessage()
+    expected = (before + "testword" + after)[len(before) - 20:len(before) + 8 + 20]
+    assert f"context={expected!r}" in message

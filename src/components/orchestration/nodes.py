@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 from langchain_core.documents import Document
 from .telemetry import extract_retriever_telemetry
 from components.ingestor.ingestor import process_document
+from components.logging_setup import mark_blocked, mark_retrieval_outcome
 from components.generator.prompts import build_filter_extraction_messages, build_query_rewrite_messages
 
 # Assuming these Type definitions are available from state.py and retriever_orchestrator.py
@@ -97,6 +98,7 @@ async def retrieve_node(
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()
         logger.error(f"Retrieval failed: {str(e)}", exc_info=True)
+        mark_retrieval_outcome("failed")
 
         metadata.update({
             "retrieval_duration": duration,
@@ -466,6 +468,8 @@ async def input_guard_node(
         f"input_guard_node: severity={verdict.severity} category={verdict.category} "
         f"blocked={not verdict.safe} fallback={verdict.fallback_used} ({duration:.2f}s)"
     )
+    if not verdict.safe:
+        mark_blocked("input_guard")
 
     # Observability
     try:

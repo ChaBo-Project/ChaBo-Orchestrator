@@ -1,5 +1,6 @@
 import logging
 import asyncio
+from contextlib import aclosing
 # Set up logger
 logger = logging.getLogger(__name__)
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
@@ -92,17 +93,28 @@ class Generator:
     async def _call_llm_streaming(
         self, messages: list
     ) -> AsyncGenerator[str, None]:
-        """Stream LLM output and record its generation outcome."""
+        """Stream LLM output and record its generation outcome.
+
+        A provider error (already logged by LLMClient) is streamed to the
+        consumer as an "Error: ..." chunk instead of being raised.
+        """
         mark_generation_outcome("running")
         try:
-            async for chunk in self.llm_client.astream(messages):
-                yield chunk
+            # aclosing: when our consumer stops early, close the LLM stream
+            # now (inside this request) rather than at garbage collection.
+            async with aclosing(self.llm_client.astream(messages)) as stream:
+                async for chunk in stream:
+                    yield chunk
         except asyncio.CancelledError:
             mark_generation_outcome("cancelled")
             raise
-        except Exception:
-            mark_generation_outcome("failed")
+        except GeneratorExit:
+            # The consumer closed the stream before it ended.
+            mark_generation_outcome("stopped_early")
             raise
+        except Exception as e:
+            mark_generation_outcome("failed")
+            yield f"Error: {str(e)}"
         else:
             mark_generation_outcome("succeeded")
 
@@ -111,8 +123,9 @@ class Generator:
         return await self._call_llm(messages)
 
     async def astream(self, messages: list) -> AsyncGenerator[str, None]:
-        async for chunk in self._call_llm_streaming(messages):
-            yield chunk
+        async with aclosing(self._call_llm_streaming(messages)) as stream:
+            async for chunk in stream:
+                yield chunk
 
     # # --- Response Post-Processing Method (Centralized Logic) ---
 
@@ -195,14 +208,15 @@ class Generator:
 
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""
-            async for chunk in self._call_llm_streaming(messages):
-                accumulated_response += chunk
-                
-                # Yield the raw text chunks immediately
-                if chatui_format:
-                    yield {"event": "data", "data": chunk}
-                else:
-                    yield chunk
+            async with aclosing(self._call_llm_streaming(messages)) as stream:
+                async for chunk in stream:
+                    accumulated_response += chunk
+
+                    # Yield the raw text chunks immediately
+                    if chatui_format:
+                        yield {"event": "data", "data": chunk}
+                    else:
+                        yield chunk
 
             # 4. Final Post-Processing (after stream is complete)
             cleaned_response = clean_citations(accumulated_response)

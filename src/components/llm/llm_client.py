@@ -3,6 +3,7 @@ LLMClient: portable, provider-agnostic LLM inference layer,
 plus the per-task client factory.
 
 """
+import asyncio
 import logging
 import os
 import time
@@ -16,7 +17,6 @@ from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_core.language_models import BaseChatModel  # for typing
 
 from ..utils import get_auth_for_generator
-from ..logging_setup import mark_generation_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ class LLMClient:
         azure_endpoint: Optional[str] = None,
         auth_config: Optional[dict] = None,
         streaming: bool = True,
+        task: Optional[str] = None,
     ):
         # Without an endpoint, ChatOpenAI defaults to api.openai.com and would send the Azure key there.
         if provider == "azure" and not _is_http_url(azure_endpoint):
@@ -53,6 +54,8 @@ class LLMClient:
         self.organization = organization
         self.azure_endpoint = azure_endpoint
         self.streaming = streaming
+        # Task name (generation, query_rewrite, ...) shown in LLM log lines.
+        self.task = task or "-"
 
         # Resolve auth from the provider's env var unless explicitly supplied.
         self.auth_config = auth_config if auth_config is not None else get_auth_for_generator(provider)
@@ -119,19 +122,22 @@ class LLMClient:
             response = await self.chat_model.ainvoke(messages)
             answer = response.content.strip()
             logger.info(
-                "LLM call completed: streaming=False duration_s=%.3f "
-                "provider=%s model=%s output_chars=%s",
+                "LLM call completed: task=%s streaming=False duration_s=%.3f "
+                "provider=%s inference_provider=%s model=%s output_chars=%s",
+                self.task,
                 time.perf_counter() - llm_started,
                 self.provider,
+                self.inference_provider or "-",
                 self.model,
                 len(answer),
             )
             return answer
         except Exception as e:
             logger.exception(
-                "LLM call failed: streaming=False duration_s=%.3f "
+                "LLM call failed: task=%s streaming=False duration_s=%.3f "
                 "provider=%s inference_provider=%s model=%s "
                 "error_type=%s error=%s",
+                self.task,
                 time.perf_counter() - llm_started,
                 self.provider,
                 self.inference_provider or "-",
@@ -142,39 +148,75 @@ class LLMClient:
             raise
 
     async def astream(self, messages: list) -> AsyncGenerator[str, None]:
-        """Provider-agnostic streaming LLM call using LangChain."""
+        """Provider-agnostic streaming LLM call using LangChain.
+
+        Errors are logged and re-raised, like ainvoke(); the caller decides
+        what the user sees.
+        """
         llm_started = time.perf_counter()
+        output_chars = 0
+        # Time to the first content chunk: separates a slow start (queueing,
+        # prompt processing) from slow token output. "-" if none arrived.
+        first_chunk_s = "-"
         try:
             logger.debug("Calling LLM with streaming")
-            output_chars = 0
             async for chunk in self.chat_model.astream(messages):
                 if hasattr(chunk, "content") and chunk.content:
+                    if output_chars == 0:
+                        first_chunk_s = "%.3f" % (time.perf_counter() - llm_started)
                     output_chars += len(chunk.content)
                     yield chunk.content
 
             logger.info(
-                "LLM call completed: streaming=True duration_s=%.3f "
-                "provider=%s model=%s output_chars=%s",
+                "LLM call completed: task=%s streaming=True duration_s=%.3f "
+                "first_chunk_s=%s provider=%s inference_provider=%s model=%s "
+                "output_chars=%s",
+                self.task,
                 time.perf_counter() - llm_started,
-                self.provider,
-                self.model,
-                output_chars,
-            )
-        except Exception as e:
-            mark_generation_outcome("failed")
-            logger.exception(
-                "LLM streaming failed: duration_s=%.3f "
-                "provider=%s inference_provider=%s model=%s "
-                "error_type=%s error=%s",
-                time.perf_counter() - llm_started,
+                first_chunk_s,
                 self.provider,
                 self.inference_provider or "-",
                 self.model,
+                output_chars,
+            )
+        except (GeneratorExit, asyncio.CancelledError) as e:
+            # The consumer stopped reading: client disconnect, output guard
+            # block, or cancellation.
+            reason = (
+                "cancelled"
+                if isinstance(e, asyncio.CancelledError)
+                else "consumer_closed"
+            )
+            logger.info(
+                "LLM streaming ended early: task=%s reason=%s duration_s=%.3f "
+                "first_chunk_s=%s provider=%s inference_provider=%s model=%s "
+                "output_chars=%s",
+                self.task,
+                reason,
+                time.perf_counter() - llm_started,
+                first_chunk_s,
+                self.provider,
+                self.inference_provider or "-",
+                self.model,
+                output_chars,
+            )
+            raise
+        except Exception as e:
+            logger.exception(
+                "LLM streaming failed: task=%s duration_s=%.3f "
+                "first_chunk_s=%s provider=%s inference_provider=%s model=%s "
+                "output_chars=%s error_type=%s error=%s",
+                self.task,
+                time.perf_counter() - llm_started,
+                first_chunk_s,
+                self.provider,
+                self.inference_provider or "-",
+                self.model,
+                output_chars,
                 type(e).__name__,
                 e,
             )
-            # Stream the error message out to the consumer
-            yield f"Error: {str(e)}"
+            raise
 
     # Backward-compatible aliases (legacy call sites / test doubles use these names).
     async def _call_llm(self, messages: list) -> str:
@@ -255,7 +297,7 @@ def build_llm_client(config, task: str) -> "LLMClient":
     auth_config = get_auth_for_generator(resolved["provider"])
 
     logger.info(f"LLM client for task '{task}': provider={resolved['provider']}, model={resolved['model']}")
-    return LLMClient(auth_config=auth_config, streaming=(task in STREAMING_TASKS), **resolved)
+    return LLMClient(auth_config=auth_config, streaming=(task in STREAMING_TASKS), task=task, **resolved)
 
 
 def build_llm_clients(config, tasks=None) -> dict:

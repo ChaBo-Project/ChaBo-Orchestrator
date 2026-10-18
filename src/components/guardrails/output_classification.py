@@ -21,6 +21,7 @@ from typing import Any, Optional, Set, Tuple
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from .llm_guard import GuardVerdict
+from ..logging_setup import mark_blocked
 from ..generator.prompts import FRAMEWORK_VALUES
 
 logger = logging.getLogger(__name__)
@@ -121,14 +122,16 @@ class StreamingClassifier:
             if not verdict.safe:
                 self.blocked = True
                 self.block_category = verdict.category
-                logger.info(
+                mark_blocked("output_classifier")
+                logger.warning(
                     f"output_classification: BLOCK (severity={verdict.severity}, category={verdict.category})"
                 )
             elif verdict.guideline_compliant is False and self.cfg.guideline_enforcement != "off":
                 if self.cfg.guideline_enforcement == "block":
                     self.blocked = True
                     self.block_category = "guideline_noncompliance"
-                    logger.info(f"output_classification: BLOCK (guideline non-compliance: {verdict.guideline_note})")
+                    mark_blocked("output_guidelines")
+                    logger.warning(f"output_classification: BLOCK (guideline non-compliance: {verdict.guideline_note})")
                 else:  # "warn"
                     logger.warning(f"output_classification: guideline non-compliance (not blocking): {verdict.guideline_note}")
         except asyncio.CancelledError:
