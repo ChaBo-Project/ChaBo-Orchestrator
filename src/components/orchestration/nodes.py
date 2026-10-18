@@ -1,7 +1,21 @@
 """
-LangGraph orchestration nodes for retrieval and generation
+LangGraph nodes for the RAG pipeline (wired in workflow.py).
 
-NEEDS TO BE UPDATED
+    ingest → [rewrite_query] → extract_filters → retrieve → generate → END
+          └→ [input_guard] ─→ guard_gate → retrieve | blocked_response → END
+
+- ingest_node: extract and chunk an uploaded PDF/DOCX (skipped without a file).
+- rewrite_query_node: optional LLM rewrite of the query for retrieval
+  ([query_rewriter] enabled); falls back to the original query on failure.
+- extract_filters_node: optional LLM extraction of metadata filters
+  ([metadata_filters] filterable_fields); proceeds without filters on failure.
+- retrieve_node: embed → Qdrant search → rerank; emits `filters_applied`.
+- generate_node_streaming: streams the cited answer as custom events.
+- input_guard_node / guard_gate_node / blocked_response_node: optional input
+  guard ([input_guard] enabled), run in parallel with the main branch and
+  joined at the deferred guard_gate.
+
+Nodes stream to the UI through LangGraph's custom stream `writer`.
 """
 import logging
 logger = logging.getLogger(__name__)

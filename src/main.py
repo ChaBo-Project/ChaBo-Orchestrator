@@ -36,7 +36,7 @@ from components.guardrails.input_guard import InputGuardClient
 from components.guardrails.output_guard import load_compiled_blocklist
 from components.guardrails.output_classification import OutputClassificationConfig, build_output_classification_messages
 from components.guardrails.llm_guard import build_guard_backend, DEFAULT_CLASSIFIER_MODEL
-from typing import Dict
+from typing import Dict, Optional
 
 config = getconfig("params.cfg")
 MAX_TURNS = config.getint("conversation_history", "MAX_TURNS", fallback=3)
@@ -74,7 +74,7 @@ logger.info(
 # Query rewriter config (optional — defaults to disabled if section is absent)
 REWRITER_ENABLED = config.getboolean("query_rewriter", "enabled", fallback=False)
 
-db_context: DBContext = DBContext() # instantiating a typed object here for potential future use (e.g. with metadata filter node)
+db_context: Optional[DBContext] = None
 if REWRITER_ENABLED:
     db_context = load_db_context_from_instance()
     if not db_context.abstract.strip():

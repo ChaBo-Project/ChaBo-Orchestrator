@@ -4,6 +4,7 @@ plus the per-task client factory.
 
 """
 import asyncio
+import json
 import logging
 import os
 import time
@@ -26,6 +27,27 @@ def _is_http_url(value: Optional[str]) -> bool:
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
+# Providers whose request body can carry `chat_template_kwargs` (OpenAI-compatible
+# chat completions: HF router/TGI, vLLM, SGLang, Azure AI Foundry).
+CHAT_TEMPLATE_KWARGS_PROVIDERS = {"huggingface", "openai", "azure"}
+
+
+def _parse_chat_template_kwargs(value, where: str) -> Optional[dict]:
+    """Parse the optional JSON object; empty/unset means "send nothing"."""
+    if value is None or isinstance(value, dict):
+        return value or None
+    if not str(value).strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"LLM config: {where} must be a JSON object, e.g. "
+                         f'{{"enable_thinking": false}}; got {value!r} ({e}).') from e
+    if not isinstance(parsed, dict):
+        raise ValueError(f"LLM config: {where} must be a JSON object, got {value!r}.")
+    return parsed or None
+
+
 class LLMClient:
     """A single configured LLM endpoint (reusable across modules)"""
 
@@ -42,10 +64,16 @@ class LLMClient:
         auth_config: Optional[dict] = None,
         streaming: bool = True,
         task: Optional[str] = None,
+        chat_template_kwargs: Optional[dict] = None,
     ):
         # Without an endpoint, ChatOpenAI defaults to api.openai.com and would send the Azure key there.
         if provider == "azure" and not _is_http_url(azure_endpoint):
             raise ValueError(f"provider 'azure' requires azure_endpoint to be an http(s) URL, got {azure_endpoint!r}.")
+        if chat_template_kwargs and provider not in CHAT_TEMPLATE_KWARGS_PROVIDERS:
+            raise ValueError(
+                f"chat_template_kwargs is not supported for provider {provider!r} "
+                f"(supported: {sorted(CHAT_TEMPLATE_KWARGS_PROVIDERS)})."
+            )
         self.provider = provider
         self.model = model
         self.max_tokens = max_tokens
@@ -56,6 +84,8 @@ class LLMClient:
         self.streaming = streaming
         # Task name (generation, query_rewrite, ...) shown in LLM log lines.
         self.task = task or "-"
+        # Extra chat-template variables (e.g. {"enable_thinking": false}); None = send nothing.
+        self.chat_template_kwargs = chat_template_kwargs or None
 
         # Resolve auth from the provider's env var unless explicitly supplied.
         self.auth_config = auth_config if auth_config is not None else get_auth_for_generator(provider)
@@ -66,13 +96,18 @@ class LLMClient:
     def _build_chat_model(self) -> BaseChatModel:
         """Initialize the appropriate LangChain chat model based on provider."""
         common_params = {"temperature": self.temperature, "max_tokens": self.max_tokens, "streaming": self.streaming}
+        # Sent in the request body only when configured, so unset = unchanged requests.
+        template_body = (
+            {"chat_template_kwargs": self.chat_template_kwargs} if self.chat_template_kwargs else {}
+        )
+        openai_extra = {"extra_body": template_body} if template_body else {}
 
         providers = {
-            "openai": lambda: ChatOpenAI(model=self.model, openai_api_key=self.auth_config["api_key"], **common_params),
+            "openai": lambda: ChatOpenAI(model=self.model, openai_api_key=self.auth_config["api_key"], **openai_extra, **common_params),
             "anthropic": lambda: ChatAnthropic(model=self.model, anthropic_api_key=self.auth_config["api_key"], **common_params),
             "cohere": lambda: ChatCohere(model=self.model, cohere_api_key=self.auth_config["api_key"], **common_params),
-            "huggingface": lambda: self._build_hf_chat_model(**common_params),
-            "azure": lambda: ChatOpenAI(model=self.model, openai_api_key=self.auth_config["api_key"], base_url=self.azure_endpoint, extra_body={"max_tokens": self.max_tokens}, temperature=self.temperature, streaming=self.streaming),
+            "huggingface": lambda: self._build_hf_chat_model(template_body, **common_params),
+            "azure": lambda: ChatOpenAI(model=self.model, openai_api_key=self.auth_config["api_key"], base_url=self.azure_endpoint, extra_body={"max_tokens": self.max_tokens, **template_body}, temperature=self.temperature, streaming=self.streaming),
         }
 
         if self.provider not in providers:
@@ -80,7 +115,7 @@ class LLMClient:
 
         return providers[self.provider]()
 
-    def _build_hf_chat_model(self, **common_params) -> BaseChatModel:
+    def _build_hf_chat_model(self, template_body: dict, **common_params) -> BaseChatModel:
         """Helper to configure HuggingFace model for Serverless or TGI Endpoint."""
         # Check if the MODEL config parameter looks like a URL (custom TGI endpoint)
         if self.model.startswith("http"):
@@ -109,8 +144,12 @@ class LLMClient:
                 streaming=self.streaming,
             )
 
-        # ChatHuggingFace wraps the endpoint and handles chat templating
-        return ChatHuggingFace(llm=llm).bind(max_tokens=self.max_tokens)
+        # ChatHuggingFace wraps the endpoint and handles chat templating.
+        # extra_body reaches InferenceClient.chat_completion (e.g. chat_template_kwargs).
+        bind_kwargs = {"max_tokens": self.max_tokens}
+        if template_body:
+            bind_kwargs["extra_body"] = template_body
+        return ChatHuggingFace(llm=llm).bind(**bind_kwargs)
 
     # --- Inference calls -----------------------------------------------------
 
@@ -255,6 +294,7 @@ _FIELDS = {
     "inference_provider": ("inference_provider", None, False),
     "organization":       ("organization",       None, False),
     "azure_endpoint":     ("azure_endpoint",     None, False),
+    "chat_template_kwargs": ("chat_template_kwargs", None, False),
 }
 
 
@@ -287,6 +327,10 @@ def build_llm_client(config, task: str) -> "LLMClient":
 
     resolved["max_tokens"] = int(resolved["max_tokens"])
     resolved["temperature"] = float(resolved["temperature"])
+    resolved["chat_template_kwargs"] = _parse_chat_template_kwargs(
+        resolved["chat_template_kwargs"],
+        f"[{section}] {key_prefix}chat_template_kwargs (or env {env_prefix}CHAT_TEMPLATE_KWARGS)",
+    )
     if resolved["provider"] == "azure" and not _is_http_url(resolved["azure_endpoint"]):
         raise ValueError(
             f"LLM config: [{section}] {key_prefix}azure_endpoint (or env {env_prefix}AZURE_ENDPOINT) "
@@ -296,7 +340,10 @@ def build_llm_client(config, task: str) -> "LLMClient":
     # Resolve auth eagerly so a misconfigured task provider fails fast at construction.
     auth_config = get_auth_for_generator(resolved["provider"])
 
-    logger.info(f"LLM client for task '{task}': provider={resolved['provider']}, model={resolved['model']}")
+    logger.info(
+        f"LLM client for task '{task}': provider={resolved['provider']}, model={resolved['model']}"
+        + (f", chat_template_kwargs={resolved['chat_template_kwargs']}" if resolved["chat_template_kwargs"] else "")
+    )
     return LLMClient(auth_config=auth_config, streaming=(task in STREAMING_TASKS), task=task, **resolved)
 
 
