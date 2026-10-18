@@ -211,12 +211,6 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             raise ValueError(f"Unsupported qdrant_mode: {mode}. Must be 'native' or 'gradio'.")
 
         if instance.hybrid_enabled:
-            if mode == 'gradio':
-                raise ValueError(
-                    "[retrieval] hybrid_enabled = true is not supported with [qdrant] mode = gradio: "
-                    "the Gradio gateway's /query_points API has no prefetch or named-vector "
-                    "parameters. Use mode = native."
-                )
             if instance.dense_weight < 0 or instance.sparse_weight < 0:
                 raise ValueError("[retrieval] dense_weight and sparse_weight must be >= 0.")
             if instance.dense_weight <= 0 and instance.sparse_weight <= 0:
@@ -392,18 +386,25 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
     # --- Startup validation for hybrid retrieval ---
     def validate_hybrid_collection(self) -> None:
         """
-        Check deployment
+        Check the collection can serve hybrid search, and read its vector names and recipe.
+        Native mode asks Qdrant directly; gradio mode asks the wrapper's collection_info API.
         """
         if not self.hybrid_enabled:
             return
-        if self.qdrant_mode.lower() != 'native':
-            raise ValueError("[retrieval] hybrid_enabled = true requires [qdrant] mode = native.")
 
-        client = self._get_qdrant_client()
-
-        info = client.get_collection(self.qdrant_collection)
-        params = info.config.params
-        sparse_config = params.sparse_vectors or {}
+        if self.qdrant_mode.lower() == 'gradio':
+            dense_vectors, sparse_config, metadata = self._gradio_collection_layout()
+        else:
+            info = self._get_qdrant_client().get_collection(self.qdrant_collection)
+            params = info.config.params
+            dense_vectors = params.vectors
+            # {sparse vector name: modifier}
+            sparse_config = {
+                name: getattr(cfg, "modifier", None)
+                for name, cfg in (params.sparse_vectors or {}).items()
+            }
+            # Older qdrant-client versions have no collection metadata attribute
+            metadata = getattr(info.config, "metadata", None)
 
         if SPARSE_VECTOR_NAME not in sparse_config:
             raise ValueError(
@@ -414,10 +415,11 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             )
 
         # Raise an error if collection has several named dense vectors
-        self._cache_dense_vector_name(params.vectors)
+        self._cache_dense_vector_name(dense_vectors)
 
         # Check for IDF modifier: query works with TF only, but worse results
-        if getattr(sparse_config[SPARSE_VECTOR_NAME], "modifier", None) != rest.Modifier.IDF:
+        modifier = sparse_config[SPARSE_VECTOR_NAME]
+        if str(getattr(modifier, "value", modifier)).lower() != rest.Modifier.IDF.value:
             logger.warning(
                 f"Sparse vector '{SPARSE_VECTOR_NAME}' in collection '{self.qdrant_collection}' "
                 f"does not have modifier=IDF. BM25 scores will use TF only, without "
@@ -425,8 +427,70 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 f"Re-create the collection with SparseVectorParams(modifier=Modifier.IDF)."
             )
 
-        # Older qdrant-client versions have no collection metadata attribute
-        self._apply_sparse_recipe(getattr(info.config, "metadata", None))
+        self._apply_sparse_recipe(metadata)
+
+    def _gradio_collection_layout(self) -> Tuple[Any, Dict[str, Any], Any]:
+        """
+        (dense vectors, {sparse name: modifier}, metadata) from the gradio wrapper's
+        collection_info API (ChaBo-Deploy hf-spaces wrapper with hybrid support).
+        """
+        client = self._get_qdrant_client()
+        try:
+            info = client.predict(collection_name=self.qdrant_collection, api_name="/collection_info")
+        except ValueError as e:
+            # gradio_client raises ValueError for an unknown api_name: a pre-hybrid wrapper
+            raise ValueError(
+                f"[retrieval] hybrid_enabled = true with [qdrant] mode = gradio needs the "
+                f"ChaBo-Deploy Qdrant Space with hybrid support (collection_info API); "
+                f"{self.qdrant_url} does not provide it ({e}). Redeploy the Qdrant Space from a "
+                f"newer ChaBo-Deploy release, or set hybrid_enabled = false."
+            ) from e
+        if isinstance(info, str):
+            info = json.loads(info)
+        if not isinstance(info, dict) or "error" in info:
+            message = info.get("message", info) if isinstance(info, dict) else info
+            raise ValueError(
+                f"[retrieval] cannot read collection '{self.qdrant_collection}' through "
+                f"{self.qdrant_url}: {message}"
+            )
+        sparse_modifiers = {
+            name: (cfg or {}).get("modifier")
+            for name, cfg in (info.get("sparse_vectors") or {}).items()
+        }
+        return info.get("dense_vectors"), sparse_modifiers, info.get("metadata")
+
+    def _gradio_query_kwargs(self, query_vector: List[float], filters: Dict = None,
+                             sparse_vector=None) -> Dict[str, Any]:
+        """
+        client.predict() kwargs for the wrapper's query_points.
+
+        Hybrid off: exactly the pre-hybrid arguments, so any wrapper version works.
+        Hybrid on: the dense vector name, plus the sparse vector and fusion settings when
+        the query has BM25 terms (otherwise that request runs dense-only).
+        """
+        kwargs: Dict[str, Any] = {
+            "query_vector_json": json.dumps(query_vector),
+            "collection_name": self.qdrant_collection,
+            "top_k": self.top_k,
+            "query_filter": json.dumps(filters) if filters else None,
+            "api_name": "/query_points",
+        }
+        if not self.hybrid_enabled:
+            return kwargs
+        if self.dense_vector_name:
+            kwargs["vector_name"] = self.dense_vector_name
+        if sparse_vector is not None:
+            kwargs.update(
+                sparse_vector_json=json.dumps(
+                    {"indices": list(sparse_vector.indices), "values": list(sparse_vector.values)}
+                ),
+                sparse_vector_name=SPARSE_VECTOR_NAME,
+                prefetch_top_k=self.prefetch_top_k,
+                dense_weight=self.dense_weight,
+                sparse_weight=self.sparse_weight,
+                rrf_k=self.rrf_k,
+            )
+        return kwargs
 
     def _apply_sparse_recipe(self, metadata: Any) -> None:
         """
@@ -547,11 +611,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 applied_filter = filters
                 narrowed = False
                 result = client.predict(
-                    query_vector_json=json.dumps(query_vector),
-                    collection_name=self.qdrant_collection,
-                    top_k=self.top_k,
-                    query_filter=json.dumps(filters) if filters else None,
-                    api_name="/query_points"
+                    **self._gradio_query_kwargs(query_vector, filters, sparse_vector)
                 )
                 if isinstance(result, dict) and "error" in result:
                     logger.error(
@@ -573,11 +633,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                         f"AND filter returned 0 results (Gradio), retrying with priority field only: {priority_filter}"
                     )
                     result = client.predict(
-                        query_vector_json=json.dumps(query_vector),
-                        collection_name=self.qdrant_collection,
-                        top_k=self.top_k,
-                        query_filter=json.dumps(priority_filter),
-                        api_name="/query_points"
+                        **self._gradio_query_kwargs(query_vector, priority_filter, sparse_vector)
                     )
                     if isinstance(result, dict) and "error" in result:
                         logger.error(
@@ -677,11 +733,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 # Run the synchronous call while preserving request logging context.
                 result = await asyncio.to_thread(
                     client.predict,
-                    query_vector_json=json.dumps(query_vector),
-                    collection_name=self.qdrant_collection,
-                    top_k=self.top_k,
-                    query_filter=json.dumps(filters) if filters else None,
-                    api_name="/query_points",
+                    **self._gradio_query_kwargs(query_vector, filters, sparse_vector),
                 )
                 if isinstance(result, dict) and "error" in result:
                     logger.error(
@@ -704,11 +756,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     )
                     result = await asyncio.to_thread(
                         client.predict,
-                        query_vector_json=json.dumps(query_vector),
-                        collection_name=self.qdrant_collection,
-                        top_k=self.top_k,
-                        query_filter=json.dumps(priority_filter),
-                        api_name="/query_points",
+                        **self._gradio_query_kwargs(query_vector, priority_filter, sparse_vector),
                     )
                     if isinstance(result, dict) and "error" in result:
                         logger.error(
