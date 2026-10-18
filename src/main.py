@@ -89,10 +89,13 @@ retriever_instance = create_retriever_from_config(config_file="params.cfg")
 
 # Hybrid retrieval
 if retriever_instance.hybrid_enabled:
-    retriever_instance.validate_hybrid_collection()  # raises ValueError with remediation text
+    # Raises ValueError with remediation text when the collection can't serve hybrid. In
+    # gradio mode a Qdrant Space still loading doesn't block startup (checked again later).
+    hybrid_ready = retriever_instance.start_hybrid_validation()
     get_sparse_encoder(retriever_instance.sparse_model, retriever_instance.sparse_language)
     logger.info(
-        "Hybrid retrieval ENABLED - dense='%s' sparse='%s' weights=%.2f/%.2f rrf_k=%d model=%s/%s",
+        "Hybrid retrieval ENABLED%s - dense='%s' sparse='%s' weights=%.2f/%.2f rrf_k=%d model=%s/%s",
+        "" if hybrid_ready else " (waiting for the Qdrant Space; dense-only until it answers)",
         retriever_instance.dense_vector_name or "<unnamed default>",
         SPARSE_VECTOR_NAME,
         retriever_instance.dense_weight, retriever_instance.sparse_weight,
