@@ -226,6 +226,8 @@ Pass API keys as environment variables at runtime:
 
 **Azure:** every task using `provider = azure` needs its own endpoint: `[generator] AZURE_ENDPOINT` and `llm_azure_endpoint` in `[metadata_filters]` / `[query_rewriter]` / `[input_guard]` / `[output_guard]` (env: `GENERATOR_AZURE_ENDPOINT`, `FILTER_EXTRACTION_LLM_AZURE_ENDPOINT`, `QUERY_REWRITE_LLM_AZURE_ENDPOINT`, `INPUT_GUARD_LLM_AZURE_ENDPOINT`, `OUTPUT_CLASSIFICATION_LLM_AZURE_ENDPOINT`). It must be a full `https://` URL; ChaBo refuses to start otherwise, to avoid requests (and the Azure key) going to api.openai.com, the OpenAI SDK's default.
 
+**Reasoning off / chat-template options (optional):** any task can send extra chat-template variables as a JSON object: `[generator] CHAT_TEMPLATE_KWARGS` and `llm_chat_template_kwargs` in the other four sections (env: `GENERATOR_CHAT_TEMPLATE_KWARGS`, `FILTER_EXTRACTION_LLM_CHAT_TEMPLATE_KWARGS`, …). Example: `{"enable_thinking": false}` turns off reasoning on Qwen3-style models, cutting time to first token from ~15 s to ~1 s; reasoning tokens are invisible in the answer but still billed. Supported for `huggingface`, `openai` and `azure` (OpenAI-compatible servers such as the HF router, vLLM or SGLang); other providers fail at startup if it is set. Unset = requests unchanged. Which keys a model accepts depends on its chat template.
+
 #### Build and Run
 
 ```bash
