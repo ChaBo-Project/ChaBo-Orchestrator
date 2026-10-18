@@ -23,6 +23,27 @@ from qdrant_client.http import models as rest
 DENSE_VECTOR_NAME = "dense"
 SPARSE_VECTOR_NAME = "sparse"
 
+# Collection-metadata key holding the retrieval recipe written at ingestion (ChaBo-Deploy
+# initialize_qdrant.py / compose README): vector names and the BM25 model + language.
+RETRIEVAL_RECIPE_KEY = "chabo_retrieval"
+
+
+def _sparse_recipe(metadata: Any) -> Optional[Dict[str, Any]]:
+    """The recipe's "sparse" entry from collection metadata, or None if absent/malformed."""
+    recipe = metadata.get(RETRIEVAL_RECIPE_KEY) if isinstance(metadata, dict) else None
+    sparse = recipe.get("sparse") if isinstance(recipe, dict) else None
+    if not isinstance(sparse, dict) or not sparse.get("model"):
+        return None
+    return sparse
+
+
+def _installed_fastembed_version() -> Optional[str]:
+    try:
+        from importlib.metadata import version
+        return version("fastembed")
+    except Exception:
+        return None
+
 
 # --- Sparse (BM25) encoder -------------------------------------------------
 # Cache the loaded model so it isn't reloaded on every request (each query calls get_sparse_encoder via _embed_sparse)
@@ -380,7 +401,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
 
         client = self._get_qdrant_client()
 
-        params = client.get_collection(self.qdrant_collection).config.params
+        info = client.get_collection(self.qdrant_collection)
+        params = info.config.params
         sparse_config = params.sparse_vectors or {}
 
         if SPARSE_VECTOR_NAME not in sparse_config:
@@ -402,6 +424,55 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 f"IDF weighting - sparse ranking quality will be degraded. "
                 f"Re-create the collection with SparseVectorParams(modifier=Modifier.IDF)."
             )
+
+        # Older qdrant-client versions have no collection metadata attribute
+        self._apply_sparse_recipe(getattr(info.config, "metadata", None))
+
+    def _apply_sparse_recipe(self, metadata: Any) -> None:
+        """
+        Use the BM25 settings the collection was ingested with, when it records them.
+
+        Collections built with a recipe (ChaBo-Deploy ingestion) store it in their metadata;
+        then the query encoder follows the collection, not [retrieval] sparse_model /
+        sparse_language. Without a recipe those config values are used, as before.
+        """
+        sparse = _sparse_recipe(metadata)
+        if sparse is None:
+            logger.info(
+                f"Collection '{self.qdrant_collection}' has no retrieval recipe in its metadata; "
+                f"using [retrieval] sparse_model='{self.sparse_model}' "
+                f"sparse_language='{self.sparse_language}' (must match ingestion)."
+            )
+            return
+
+        vector = sparse.get("vector", SPARSE_VECTOR_NAME)
+        if vector != SPARSE_VECTOR_NAME:
+            raise ValueError(
+                f"[retrieval] collection '{self.qdrant_collection}' recipe names sparse vector "
+                f"'{vector}', but ChaBo searches '{SPARSE_VECTOR_NAME}'."
+            )
+
+        model = str(sparse["model"])
+        language = str(sparse.get("language") or "english")
+        if (model, language) != (self.sparse_model, self.sparse_language):
+            logger.warning(
+                f"[retrieval] sparse_model='{self.sparse_model}' sparse_language="
+                f"'{self.sparse_language}' differ from collection '{self.qdrant_collection}' "
+                f"recipe (model='{model}', language='{language}'); using the collection's."
+            )
+        self.sparse_model, self.sparse_language = model, language
+
+        ingested_with = sparse.get("fastembed")
+        installed = _installed_fastembed_version()
+        if ingested_with and installed and ingested_with != installed:
+            logger.warning(
+                f"Collection '{self.qdrant_collection}' was BM25-encoded with fastembed "
+                f"{ingested_with}; this image has {installed}. Tokenization may differ."
+            )
+        logger.info(
+            f"Sparse encoder settings from collection metadata: model='{model}' "
+            f"language='{language}' fastembed={ingested_with or '-'}"
+        )
 
     # --- Hybrid failure hint ---
     def _log_hybrid_error_hint(self) -> None:
