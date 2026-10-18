@@ -63,10 +63,17 @@ def prepare_conversation(
                             since they cause spurious filter matches)
     """
     messages = normalize_messages(messages_value)
+    user_messages = [msg for msg in messages if msg.role == 'user']
+    if not user_messages:
+        # Validation accepts `messages: []`; without this the request runs with an
+        # empty query and only the generator's "Query cannot be empty" shows it.
+        logger.warning(
+            "No user message in request (messages=%s); using fallback text (%s chars)",
+            len(messages), len(fallback_text or ""),
+        )
     if not messages:
         return fallback_text, None, None
 
-    user_messages = [msg for msg in messages if msg.role == 'user']
     query = user_messages[-1].content if user_messages else fallback_text
 
     msg_metadata = {

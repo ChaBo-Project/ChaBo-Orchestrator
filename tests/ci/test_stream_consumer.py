@@ -10,10 +10,13 @@ guard-blocked stream still terminates cleanly on the wire.
 """
 import asyncio
 import json
+import logging
+
+import pytest
 
 from components.guardrails.output_guard import StreamingBlocklistFilter, compile_blocklist
 from components.orchestration.renderers import MarkdownRenderer, OpenAIChunkRenderer
-from components.orchestration.streaming import consume_stream
+from components.orchestration.streaming import consume_stream, prepare_conversation
 
 SOURCES = [{"title": "Wheat guide", "uri": "https://example.org/wheat"}]
 FILTERS = {"filters": {"crop_type": ["wheat"]}, "narrowed": False}
@@ -183,3 +186,23 @@ def test_a_blocked_stream_closes_the_pipeline_immediately():
         return list(closed)
 
     assert asyncio.run(run()) == [True]
+
+
+@pytest.mark.parametrize(
+    "messages",
+    [[], [{"role": "assistant", "content": "Hello, how can I help?"}]],
+)
+def test_a_request_without_a_user_message_logs_a_warning(caplog, messages):
+    with caplog.at_level(logging.WARNING, logger="components.orchestration.streaming"):
+        query, _, _ = prepare_conversation(messages)
+
+    assert query == ""
+    assert "No user message in request" in caplog.text
+
+
+def test_a_request_with_a_user_message_logs_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="components.orchestration.streaming"):
+        query, _, _ = prepare_conversation([{"role": "user", "content": "What is ChaBo?"}])
+
+    assert query == "What is ChaBo?"
+    assert "No user message" not in caplog.text

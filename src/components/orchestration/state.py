@@ -11,7 +11,6 @@ class GraphState(TypedDict, total=False):
     query: str
     context: str
     raw_documents: List[Document]  # Retrieved documents for generation
-    raw_context: List[Document]    # Alias for backward compatibility
     ingestor_context: str
     result: str
     sources: List[Dict[str, str]]
