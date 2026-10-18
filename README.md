@@ -334,6 +334,8 @@ python src/components/ingestor/upload_parquet.py \
     --vector_size 1024
 ```
 
+Deployments built from ChaBo-Deploy ingest through their own path instead: the Qdrant Space's `initialize_qdrant.py` (HF Spaces) or the compose README's ingestion example. `upload_parquet.py` remains a development tool.
+
 **For hybrid retrieval**, add `--hybrid`. This builds the collection with a *named* dense vector plus a BM25 sparse vector, and computes the sparse vectors from each chunk's `text`:
 
 ```bash
@@ -345,9 +347,11 @@ python src/components/ingestor/upload_parquet.py \
     --sparse_language english        # use 'arabic' for an Arabic corpus
 ```
 
-> **`--sparse_model` and `--sparse_language` must match `[retrieval] sparse_model` and `sparse_language` in `params.cfg`.** 
+> **`--sparse_model` and `--sparse_language` must match `[retrieval] sparse_model` and `sparse_language` in `params.cfg`.** `upload_parquet.py` doesn't record them on the collection. Collections built by ChaBo-Deploy ingestion (Qdrant Space with `SPARSE_MODEL` set, or the compose hybrid example) store their BM25 recipe in the collection metadata (`chabo_retrieval`); the orchestrator reads it at startup and uses it instead of `params.cfg`, with a warning if they differ.
 
-Hybrid needs a **fresh** collection — an existing dense-only collection stores one unnamed vector and cannot gain a sparse one in place, so re-ingest under a new `--collection` name. It also requires **Qdrant server 1.17 or newer** (weighted RRF) and `[qdrant] mode = native`; both are verified at startup.
+Hybrid needs a **fresh** collection — an existing dense-only collection stores one unnamed vector and cannot gain a sparse one in place, so re-ingest under a new `--collection` name. It also requires **Qdrant server 1.17 or newer** (weighted RRF), verified at startup. Both `[qdrant]` modes are supported: `native`, and `gradio` with a ChaBo-Deploy Qdrant Space that has hybrid support (its `collection_info` API, checked at startup; older Spaces fail with a message to redeploy). With `hybrid_enabled = false`, requests to the Space are unchanged.
+
+Only `Qdrant/bm25` is tested as `sparse_model`; neural sparse models (e.g. SPLADE) are not supported, since the sparse vector uses Qdrant's IDF modifier, which suits BM25 only. Its assets (stopword lists for 18 languages) are baked into the image, so hybrid startup needs no HF Hub access.
 
 **Expected parquet schema** — the file must have two columns:
 

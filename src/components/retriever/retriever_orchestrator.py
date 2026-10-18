@@ -104,7 +104,7 @@ def _get_dense_vector_name(vectors_config: Any, collection: str) -> Optional[str
     raise ValueError(
         f"Qdrant collection '{collection}' has several named dense vectors "
         f"{sorted(vectors_config)}, so ChaBo cannot tell which one to search. It expects a "
-        f"collection with a single dense vector, as built by upload_parquet.py."
+        f"collection with a single dense vector, as built by ChaBo ingestion."
     )
 
 
@@ -410,8 +410,9 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             raise ValueError(
                 f"[retrieval] collection '{self.qdrant_collection}' has no sparse vector named "
                 f"'{SPARSE_VECTOR_NAME}'. Available sparse vectors: {sorted(sparse_config)}. "
-                f"Re-ingest with: python src/components/ingestor/upload_parquet.py --hybrid "
-                f"--collection {self.qdrant_collection}"
+                f"Re-ingest into a new hybrid collection (ChaBo-Deploy Qdrant Space with "
+                f"SPARSE_MODEL=Qdrant/bm25, the compose README's hybrid ingestion example, or "
+                f"upload_parquet.py --hybrid), or set [retrieval] hybrid_enabled = false."
             )
 
         # Raise an error if collection has several named dense vectors
