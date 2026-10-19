@@ -65,13 +65,17 @@ async def score_case(
 
 async def score_testset(metrics: Dict[str, Any], results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Add RAGAS scores to every "ok" case in a graph_runner.run_testset() result list. Returns
-    new dicts (does not mutate the input). Non-"ok" cases pass through with scores=None -
-    a failed/blocked/no-context case is never averaged in as if it were a real answer.
+    Add RAGAS scores to every scorable case in a run_eval.py result list. Returns new dicts
+    (does not mutate the input). A case passes through with scores=None, never averaged in,
+    when either: status != "ok" (a failed/blocked/no-context case is never scored as if it
+    were a real answer), or expected_answer is empty (RAGAS's reference-based metrics, e.g.
+    context_recall, require a real reference to score against - cases deliberately left
+    without one, like a should-be-declined question that got answered anyway, can't be
+    scored even though they did get a real answer).
     """
     scored: List[Dict[str, Any]] = []
     for result in results:
-        if result["status"] != "ok":
+        if result["status"] != "ok" or not result.get("expected_answer"):
             scored.append({**result, "scores": None})
             continue
 
