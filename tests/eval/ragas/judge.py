@@ -51,14 +51,17 @@ def build_judge(config) -> Any:
     azure_endpoint = get_config_value(config, "ragas", "AZURE_ENDPOINT", "RAGAS_AZURE_ENDPOINT")
     api_key = get_auth_for_generator("azure")["api_key"]
 
-    from openai import OpenAI
+    from openai import AsyncOpenAI
     from ragas.llms import llm_factory
 
-    # Plain OpenAI client pointed at the Azure endpoint's base_url, the same pattern ChaBo's
-    # own LLMClient already uses for provider="azure" (src/components/llm/llm_client.py) -
-    # Azure OpenAI deployments are OpenAI-API-compatible, so no separate Azure SDK class or
-    # api_version is needed.
-    client = OpenAI(api_key=api_key, base_url=azure_endpoint)
+    # Async client, pointed at the Azure endpoint's base_url the same way ChaBo's own
+    # LLMClient does for provider="azure" (src/components/llm/llm_client.py) - Azure OpenAI
+    # deployments are OpenAI-API-compatible, so no separate Azure SDK class or api_version is
+    # needed. Must be the async client specifically: scoring.py calls RAGAS metrics' .ascore()
+    # (async), and RAGAS's async path raises TypeError if the underlying client is sync-only
+    # (confirmed via a real test run - a plain sync OpenAI client here fails at the first
+    # metric score with "Cannot use agenerate() with a synchronous client").
+    client = AsyncOpenAI(api_key=api_key, base_url=azure_endpoint)
 
     # ragas==0.4.3's llm_factory has a real bug with provider="azure": azure isn't one of
     # its explicitly-handled providers, so it falls through to a generic fallback path that
