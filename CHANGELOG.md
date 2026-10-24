@@ -6,7 +6,6 @@
 ### Features
 
 * add optional per-task chat_template_kwargs to turn off model reasoning ([75415bc](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/75415bcaf1515abea66a3f396dbddf5345153b79)), closes [#71](https://github.com/ChaBo-Project/ChaBo-Orchestrator/issues/71)
-* add readable execution logs and generation outcome tracking ([6b019ed](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/6b019ed3ecfd9c3906fe42ba4baea22123706949))
 * add readable process and execution logs ([e656be1](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/e656be1462ff78bf42975fe0d5e83fdf44a18579))
 * clarify generation outcomes and add stage timing logs ([29cafeb](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/29cafeb56630a22c310c31957b67ba53329a4c1c))
 * complete readable execution logging with retention and tests ([3ce6131](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/3ce61310e791b080d52ca52e77f11cec2b2e5061))
