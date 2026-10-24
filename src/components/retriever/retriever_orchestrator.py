@@ -7,7 +7,7 @@ import time
 logger = logging.getLogger(__name__)
 
 from typing import List, Dict, Any, Union, Optional, Tuple
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 from qdrant_client import QdrantClient, AsyncQdrantClient
 from gradio_client import Client as GradioClient
 from langchain_core.documents import Document
@@ -22,6 +22,38 @@ from qdrant_client.http import models as rest
 # Default qdrant vector names for hybrid (we lookup the actual names from the collection)
 DENSE_VECTOR_NAME = "dense"
 SPARSE_VECTOR_NAME = "sparse"
+
+# Collection-metadata key holding the retrieval recipe written at ingestion (ChaBo-Deploy
+# initialize_qdrant.py / compose README): vector names and the BM25 model + language.
+RETRIEVAL_RECIPE_KEY = "chabo_retrieval"
+
+
+def _sparse_recipe(metadata: Any) -> Optional[Dict[str, Any]]:
+    """The recipe's "sparse" entry from collection metadata, or None if absent/malformed."""
+    recipe = metadata.get(RETRIEVAL_RECIPE_KEY) if isinstance(metadata, dict) else None
+    sparse = recipe.get("sparse") if isinstance(recipe, dict) else None
+    if not isinstance(sparse, dict) or not sparse.get("model"):
+        return None
+    return sparse
+
+
+class QdrantSpaceNotReady(Exception):
+    """The gradio Qdrant Space doesn't answer yet (e.g. still loading its collection)."""
+
+
+# Gradio mode: how often to re-check a Qdrant Space that isn't ready yet, how often to
+# warn while waiting, and the minimum gap between checks triggered by searches.
+HYBRID_RECHECK_SECONDS = 60
+HYBRID_WAIT_WARNING_SECONDS = 300
+HYBRID_REQUEST_CHECK_SECONDS = 10
+
+
+def _installed_fastembed_version() -> Optional[str]:
+    try:
+        from importlib.metadata import version
+        return version("fastembed")
+    except Exception:
+        return None
 
 
 # --- Sparse (BM25) encoder -------------------------------------------------
@@ -83,7 +115,7 @@ def _get_dense_vector_name(vectors_config: Any, collection: str) -> Optional[str
     raise ValueError(
         f"Qdrant collection '{collection}' has several named dense vectors "
         f"{sorted(vectors_config)}, so ChaBo cannot tell which one to search. It expects a "
-        f"collection with a single dense vector, as built by upload_parquet.py."
+        f"collection with a single dense vector, as built by ChaBo ingestion."
     )
 
 
@@ -171,6 +203,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
 
     dense_vector_name: Optional[str] = Field(default=None, exclude=True)
     dense_vector_name_known: bool = Field(default=False, exclude=True)
+    # Hybrid is used only once the collection check has passed (always at startup in
+    # native mode; in gradio mode possibly later, once the Qdrant Space has loaded).
+    hybrid_ready: bool = Field(default=False, exclude=True)
+
+    _hybrid_check_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    _hybrid_wait_started: Optional[float] = PrivateAttr(default=None)
+    _hybrid_last_warning: float = PrivateAttr(default=0.0)
+    _hybrid_last_check: float = PrivateAttr(default=0.0)
+    _hybrid_config_error: Optional[str] = PrivateAttr(default=None)
 
     # We use separate caches for the sync and async clients
     sync_qdrant_client: QdrantClient = Field(default=None, exclude=True)
@@ -190,12 +231,6 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             raise ValueError(f"Unsupported qdrant_mode: {mode}. Must be 'native' or 'gradio'.")
 
         if instance.hybrid_enabled:
-            if mode == 'gradio':
-                raise ValueError(
-                    "[retrieval] hybrid_enabled = true is not supported with [qdrant] mode = gradio: "
-                    "the Gradio gateway's /query_points API has no prefetch or named-vector "
-                    "parameters. Use mode = native."
-                )
             if instance.dense_weight < 0 or instance.sparse_weight < 0:
                 raise ValueError("[retrieval] dense_weight and sparse_weight must be >= 0.")
             if instance.dense_weight <= 0 and instance.sparse_weight <= 0:
@@ -371,37 +406,243 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
     # --- Startup validation for hybrid retrieval ---
     def validate_hybrid_collection(self) -> None:
         """
-        Check deployment
+        Check the collection can serve hybrid search, and read its vector names and recipe.
+        Native mode asks Qdrant directly; gradio mode asks the wrapper's collection_info API.
         """
         if not self.hybrid_enabled:
             return
-        if self.qdrant_mode.lower() != 'native':
-            raise ValueError("[retrieval] hybrid_enabled = true requires [qdrant] mode = native.")
 
-        client = self._get_qdrant_client()
-
-        params = client.get_collection(self.qdrant_collection).config.params
-        sparse_config = params.sparse_vectors or {}
+        if self.qdrant_mode.lower() == 'gradio':
+            dense_vectors, sparse_config, metadata = self._gradio_collection_layout()
+        else:
+            info = self._get_qdrant_client().get_collection(self.qdrant_collection)
+            params = info.config.params
+            dense_vectors = params.vectors
+            # {sparse vector name: modifier}
+            sparse_config = {
+                name: getattr(cfg, "modifier", None)
+                for name, cfg in (params.sparse_vectors or {}).items()
+            }
+            # Older qdrant-client versions have no collection metadata attribute
+            metadata = getattr(info.config, "metadata", None)
 
         if SPARSE_VECTOR_NAME not in sparse_config:
             raise ValueError(
                 f"[retrieval] collection '{self.qdrant_collection}' has no sparse vector named "
                 f"'{SPARSE_VECTOR_NAME}'. Available sparse vectors: {sorted(sparse_config)}. "
-                f"Re-ingest with: python src/components/ingestor/upload_parquet.py --hybrid "
-                f"--collection {self.qdrant_collection}"
+                f"Re-ingest into a new hybrid collection (ChaBo-Deploy Qdrant Space with "
+                f"SPARSE_MODEL=Qdrant/bm25, the compose README's hybrid ingestion example, or "
+                f"upload_parquet.py --hybrid), or set [retrieval] hybrid_enabled = false."
             )
 
         # Raise an error if collection has several named dense vectors
-        self._cache_dense_vector_name(params.vectors)
+        self._cache_dense_vector_name(dense_vectors)
 
         # Check for IDF modifier: query works with TF only, but worse results
-        if getattr(sparse_config[SPARSE_VECTOR_NAME], "modifier", None) != rest.Modifier.IDF:
+        modifier = sparse_config[SPARSE_VECTOR_NAME]
+        if str(getattr(modifier, "value", modifier)).lower() != rest.Modifier.IDF.value:
             logger.warning(
                 f"Sparse vector '{SPARSE_VECTOR_NAME}' in collection '{self.qdrant_collection}' "
                 f"does not have modifier=IDF. BM25 scores will use TF only, without "
                 f"IDF weighting - sparse ranking quality will be degraded. "
                 f"Re-create the collection with SparseVectorParams(modifier=Modifier.IDF)."
             )
+
+        self._apply_sparse_recipe(metadata)
+        self.hybrid_ready = True
+
+    # --- Hybrid startup in gradio mode: don't block on a Qdrant Space that is still loading ---
+    def start_hybrid_validation(self) -> bool:
+        """
+        Run the hybrid collection check at startup. Returns True when hybrid is ready.
+
+        A collection that is wrong (no sparse vector, pre-hybrid wrapper, ...) fails startup.
+        In gradio mode a Qdrant Space that doesn't answer yet does not: it rebuilds its
+        collection on every start and only serves its API once loading has finished, which
+        can take many minutes. The check then repeats in the background and on searches,
+        and hybrid switches on by itself once the Space answers. Until then searches run
+        dense-only.
+        """
+        if not self.hybrid_enabled:
+            return False
+        try:
+            self.validate_hybrid_collection()
+            return True
+        except QdrantSpaceNotReady as e:
+            self._hybrid_wait_started = time.monotonic()
+            self._hybrid_last_warning = self._hybrid_last_check = time.monotonic()
+            logger.warning(
+                f"Hybrid retrieval: Qdrant Space {self.qdrant_url} is not ready yet ({e}); it "
+                f"is probably still loading its collection. Searches run dense-only until it "
+                f"answers; checking every {HYBRID_RECHECK_SECONDS}s."
+            )
+            threading.Thread(
+                target=self._hybrid_recheck_loop, name="hybrid-recheck", daemon=True
+            ).start()
+            return False
+
+    def _hybrid_recheck_loop(self) -> None:
+        while not self.hybrid_ready and self._hybrid_config_error is None:
+            time.sleep(HYBRID_RECHECK_SECONDS)
+            self._try_hybrid_check()
+
+    def _try_hybrid_check(self) -> None:
+        """One check while waiting for the Qdrant Space; logs the outcome."""
+        if not self._hybrid_check_lock.acquire(blocking=False):
+            return  # another check is running
+        try:
+            if self.hybrid_ready or self._hybrid_config_error is not None:
+                return
+            self._hybrid_last_check = time.monotonic()
+            waited = (time.monotonic() - (self._hybrid_wait_started or time.monotonic())) / 60
+            try:
+                self.validate_hybrid_collection()
+            except QdrantSpaceNotReady as e:
+                if time.monotonic() - self._hybrid_last_warning >= HYBRID_WAIT_WARNING_SECONDS:
+                    self._hybrid_last_warning = time.monotonic()
+                    logger.warning(
+                        f"Hybrid retrieval inactive for {waited:.0f} min: still waiting for "
+                        f"Qdrant Space {self.qdrant_url} ({e}). Searches run dense-only."
+                    )
+                return
+            except Exception as e:
+                # The Space answers but can't serve hybrid: a deployment mistake. Startup
+                # is over, so stay dense-only rather than taking the service down.
+                self._hybrid_config_error = str(e)
+                logger.error(
+                    f"Hybrid retrieval disabled for this run: {e} "
+                    f"Searches run dense-only; fix the deployment and restart."
+                )
+                return
+            logger.info(f"Hybrid retrieval active after waiting {waited:.0f} min for the Qdrant Space.")
+        finally:
+            self._hybrid_check_lock.release()
+
+    def _hybrid_active(self) -> bool:
+        """Whether this search should use hybrid; while waiting, may trigger a check."""
+        if not self.hybrid_enabled:
+            return False
+        if (not self.hybrid_ready and self._hybrid_config_error is None
+                and time.monotonic() - self._hybrid_last_check >= HYBRID_REQUEST_CHECK_SECONDS):
+            self._try_hybrid_check()
+        return self.hybrid_ready
+
+    def _gradio_collection_layout(self) -> Tuple[Any, Dict[str, Any], Any]:
+        """
+        (dense vectors, {sparse name: modifier}, metadata) from the gradio wrapper's
+        collection_info API (ChaBo-Deploy hf-spaces wrapper with hybrid support).
+        """
+        try:
+            client = self._get_qdrant_client()
+        except Exception as e:
+            # Connection refused / "Could not fetch config": the Space isn't serving yet
+            raise QdrantSpaceNotReady(f"{type(e).__name__}: {e}") from e
+        try:
+            info = client.predict(collection_name=self.qdrant_collection, api_name="/collection_info")
+        except ValueError as e:
+            if "api_name" not in str(e):
+                raise QdrantSpaceNotReady(f"{type(e).__name__}: {e}") from e
+            # gradio_client raises ValueError for an unknown api_name: a pre-hybrid wrapper
+            raise ValueError(
+                f"[retrieval] hybrid_enabled = true with [qdrant] mode = gradio needs the "
+                f"ChaBo-Deploy Qdrant Space with hybrid support (collection_info API); "
+                f"{self.qdrant_url} does not provide it ({e}). Redeploy the Qdrant Space from a "
+                f"newer ChaBo-Deploy release, or set hybrid_enabled = false."
+            ) from e
+        except Exception as e:
+            raise QdrantSpaceNotReady(f"{type(e).__name__}: {e}") from e
+        if isinstance(info, str):
+            info = json.loads(info)
+        if not isinstance(info, dict) or "error" in info:
+            message = info.get("message", info) if isinstance(info, dict) else info
+            raise ValueError(
+                f"[retrieval] cannot read collection '{self.qdrant_collection}' through "
+                f"{self.qdrant_url}: {message}"
+            )
+        sparse_modifiers = {
+            name: (cfg or {}).get("modifier")
+            for name, cfg in (info.get("sparse_vectors") or {}).items()
+        }
+        return info.get("dense_vectors"), sparse_modifiers, info.get("metadata")
+
+    def _gradio_query_kwargs(self, query_vector: List[float], filters: Dict = None,
+                             sparse_vector=None) -> Dict[str, Any]:
+        """
+        client.predict() kwargs for the wrapper's query_points.
+
+        Hybrid off: exactly the pre-hybrid arguments, so any wrapper version works.
+        Hybrid on: the dense vector name, plus the sparse vector and fusion settings when
+        the query has BM25 terms (otherwise that request runs dense-only).
+        """
+        kwargs: Dict[str, Any] = {
+            "query_vector_json": json.dumps(query_vector),
+            "collection_name": self.qdrant_collection,
+            "top_k": self.top_k,
+            "query_filter": json.dumps(filters) if filters else None,
+            "api_name": "/query_points",
+        }
+        if not (self.hybrid_enabled and self.hybrid_ready):
+            return kwargs
+        if self.dense_vector_name:
+            kwargs["vector_name"] = self.dense_vector_name
+        if sparse_vector is not None:
+            kwargs.update(
+                sparse_vector_json=json.dumps(
+                    {"indices": list(sparse_vector.indices), "values": list(sparse_vector.values)}
+                ),
+                sparse_vector_name=SPARSE_VECTOR_NAME,
+                prefetch_top_k=self.prefetch_top_k,
+                dense_weight=self.dense_weight,
+                sparse_weight=self.sparse_weight,
+                rrf_k=self.rrf_k,
+            )
+        return kwargs
+
+    def _apply_sparse_recipe(self, metadata: Any) -> None:
+        """
+        Use the BM25 settings the collection was ingested with, when it records them.
+
+        Collections built with a recipe (ChaBo-Deploy ingestion) store it in their metadata;
+        then the query encoder follows the collection, not [retrieval] sparse_model /
+        sparse_language. Without a recipe those config values are used, as before.
+        """
+        sparse = _sparse_recipe(metadata)
+        if sparse is None:
+            logger.info(
+                f"Collection '{self.qdrant_collection}' has no retrieval recipe in its metadata; "
+                f"using [retrieval] sparse_model='{self.sparse_model}' "
+                f"sparse_language='{self.sparse_language}' (must match ingestion)."
+            )
+            return
+
+        vector = sparse.get("vector", SPARSE_VECTOR_NAME)
+        if vector != SPARSE_VECTOR_NAME:
+            raise ValueError(
+                f"[retrieval] collection '{self.qdrant_collection}' recipe names sparse vector "
+                f"'{vector}', but ChaBo searches '{SPARSE_VECTOR_NAME}'."
+            )
+
+        model = str(sparse["model"])
+        language = str(sparse.get("language") or "english")
+        if (model, language) != (self.sparse_model, self.sparse_language):
+            logger.warning(
+                f"[retrieval] sparse_model='{self.sparse_model}' sparse_language="
+                f"'{self.sparse_language}' differ from collection '{self.qdrant_collection}' "
+                f"recipe (model='{model}', language='{language}'); using the collection's."
+            )
+        self.sparse_model, self.sparse_language = model, language
+
+        ingested_with = sparse.get("fastembed")
+        installed = _installed_fastembed_version()
+        if ingested_with and installed and ingested_with != installed:
+            logger.warning(
+                f"Collection '{self.qdrant_collection}' was BM25-encoded with fastembed "
+                f"{ingested_with}; this image has {installed}. Tokenization may differ."
+            )
+        logger.info(
+            f"Sparse encoder settings from collection metadata: model='{model}' "
+            f"language='{language}' fastembed={ingested_with or '-'}"
+        )
 
     # --- Hybrid failure hint ---
     def _log_hybrid_error_hint(self) -> None:
@@ -476,11 +717,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 applied_filter = filters
                 narrowed = False
                 result = client.predict(
-                    query_vector_json=json.dumps(query_vector),
-                    collection_name=self.qdrant_collection,
-                    top_k=self.top_k,
-                    query_filter=json.dumps(filters) if filters else None,
-                    api_name="/query_points"
+                    **self._gradio_query_kwargs(query_vector, filters, sparse_vector)
                 )
                 if isinstance(result, dict) and "error" in result:
                     logger.error(
@@ -502,11 +739,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                         f"AND filter returned 0 results (Gradio), retrying with priority field only: {priority_filter}"
                     )
                     result = client.predict(
-                        query_vector_json=json.dumps(query_vector),
-                        collection_name=self.qdrant_collection,
-                        top_k=self.top_k,
-                        query_filter=json.dumps(priority_filter),
-                        api_name="/query_points"
+                        **self._gradio_query_kwargs(query_vector, priority_filter, sparse_vector)
                     )
                     if isinstance(result, dict) and "error" in result:
                         logger.error(
@@ -606,11 +839,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 # Run the synchronous call while preserving request logging context.
                 result = await asyncio.to_thread(
                     client.predict,
-                    query_vector_json=json.dumps(query_vector),
-                    collection_name=self.qdrant_collection,
-                    top_k=self.top_k,
-                    query_filter=json.dumps(filters) if filters else None,
-                    api_name="/query_points",
+                    **self._gradio_query_kwargs(query_vector, filters, sparse_vector),
                 )
                 if isinstance(result, dict) and "error" in result:
                     logger.error(
@@ -633,11 +862,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     )
                     result = await asyncio.to_thread(
                         client.predict,
-                        query_vector_json=json.dumps(query_vector),
-                        collection_name=self.qdrant_collection,
-                        top_k=self.top_k,
-                        query_filter=json.dumps(priority_filter),
-                        api_name="/query_points",
+                        **self._gradio_query_kwargs(query_vector, priority_filter, sparse_vector),
                     )
                     if isinstance(result, dict) and "error" in result:
                         logger.error(
@@ -820,7 +1045,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             mark_retrieval_outcome("failed")
             return []
 
-        sparse_vector = self._embed_sparse(query) if self.hybrid_enabled else None
+        hybrid = self.hybrid_enabled and self._hybrid_active()
+        sparse_vector = self._embed_sparse(query) if hybrid else None
 
         # B. Search Qdrant (Dynamic Call)
         candidate_results, _, _ = self._search_qdrant(
@@ -866,7 +1092,9 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             mark_retrieval_outcome("failed")
             return []
 
-        sparse_vector = await asyncio.to_thread(self._embed_sparse, query) if self.hybrid_enabled else None
+        # A check while waiting for the Qdrant Space makes a network call: keep it off the loop
+        hybrid = self.hybrid_enabled and (self.hybrid_ready or await asyncio.to_thread(self._hybrid_active))
+        sparse_vector = await asyncio.to_thread(self._embed_sparse, query) if hybrid else None
 
         # B. Search Qdrant (Dynamic Async Call)
         candidate_results, applied_filter, narrowed = await self._asearch_qdrant(

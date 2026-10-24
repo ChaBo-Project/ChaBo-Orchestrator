@@ -12,6 +12,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Bake the BM25 assets used by hybrid retrieval (Qdrant/bm25: stopword lists for its 18
+# languages, ~128 KB), so hybrid startup needs no HF Hub access and doesn't re-download
+# on every restart. Other sparse models still download at runtime into this cache.
+ENV FASTEMBED_CACHE_PATH=/opt/fastembed_cache
+RUN python -c "from fastembed import SparseTextEmbedding; SparseTextEmbedding('Qdrant/bm25')" && \
+    chmod -R a+rwX /opt/fastembed_cache
+
 # ---------- Copy Project Files ----------
 # Set appropriate ownership and permissions
 COPY --link --chown=1000 . .

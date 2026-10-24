@@ -333,6 +333,8 @@ Subclass `BaseRenderer` in `renderers.py` (text / notice / footnote / sources / 
 
 `top_k` (retriever candidate count) and `reranker_top_k` (final reranked count) are set in the `[retrieval]` section of `params.cfg`. Unlike the deployment-identity settings, these tuning knobs have no env-var override - read from `params.cfg` only. The same applies to the hybrid retrieval knobs (`hybrid_enabled`, `reranker_enabled`, `prefetch_top_k`, `dense_weight`, `sparse_weight`, `rrf_k`) - `params.cfg` only, no env-var override.
 
+Hybrid works in both `[qdrant]` modes. At startup `validate_hybrid_collection()` reads the collection layout (native: `get_collection`; gradio: the Qdrant Space's `collection_info` API) and, when present, the BM25 recipe stored in the collection metadata under `chabo_retrieval` — that recipe overrides `sparse_model` / `sparse_language`. In gradio mode `_gradio_query_kwargs()` builds every `query_points` call: hybrid off sends exactly the pre-hybrid arguments, hybrid on adds `vector_name`, the sparse vector and the fusion settings. Only `Qdrant/bm25` is tested.
+
 ---
 
 ## Known Tech Debt
