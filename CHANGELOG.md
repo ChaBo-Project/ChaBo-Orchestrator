@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.9.3](https://github.com/ChaBo-Project/ChaBo-Orchestrator/compare/chabo-rag-orchestrator-v0.9.2...chabo-rag-orchestrator-v0.9.3) (2026-10-24)
+
+
+### Features
+
+* add optional per-task chat_template_kwargs to turn off model reasoning ([75415bc](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/75415bcaf1515abea66a3f396dbddf5345153b79)), closes [#71](https://github.com/ChaBo-Project/ChaBo-Orchestrator/issues/71)
+* add readable execution logs and generation outcome tracking ([6b019ed](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/6b019ed3ecfd9c3906fe42ba4baea22123706949))
+* add readable process and execution logs ([e656be1](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/e656be1462ff78bf42975fe0d5e83fdf44a18579))
+* clarify generation outcomes and add stage timing logs ([29cafeb](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/29cafeb56630a22c310c31957b67ba53329a4c1c))
+* complete readable execution logging with retention and tests ([3ce6131](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/3ce61310e791b080d52ca52e77f11cec2b2e5061))
+* make file logging opt-in and close diagnostic gaps in execution logs ([a1c3b93](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/a1c3b9301da63598e74b6fddac4ec05296b6b918))
+* support hybrid retrieval with [qdrant] mode = gradio ([061f842](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/061f8422a9d7dfaf6fb527c3fbbcd730fe17bc78))
+* use the collection's stored BM25 recipe for hybrid query encoding ([3863e91](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/3863e91622f683a222cd9d757f76be0b2a91eb94))
+
+
+### Bug Fixes
+
+* don't fail startup while the gradio Qdrant Space is still loading ([c40332a](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/c40332abad5f363714966f74a29a735f740eecf5))
+* preserve logging fallback and capture startup exceptions ([4cf6f35](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/4cf6f35481bb774ec5c6593018ac57ee5edd76c7))
+* preserve retrieval logging context and exclude logs from image ([cc69e51](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/cc69e51e13a8c3a1663f9dcc4d464f5eed6faccb))
+* remove query strings from access logs ([2494be9](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/2494be9b2462361a942b0811b69612ab3fe5135c))
+
 ## [0.9.2](https://github.com/ChaBo-Project/ChaBo-Orchestrator/compare/chabo-rag-orchestrator-v0.9.1...chabo-rag-orchestrator-v0.9.2) (2026-10-06)
 
 
