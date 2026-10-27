@@ -29,7 +29,7 @@ def _is_http_url(value: Optional[str]) -> bool:
 
 # Providers whose request body can carry `chat_template_kwargs` (OpenAI-compatible
 # chat completions: HF router/TGI, vLLM, SGLang, Azure AI Foundry).
-CHAT_TEMPLATE_KWARGS_PROVIDERS = {"huggingface", "openai", "azure"}
+CHAT_TEMPLATE_KWARGS_PROVIDERS = {"huggingface", "huggingface_router", "openai", "azure"}
 
 
 def _parse_chat_template_kwargs(value, where: str) -> Optional[dict]:
@@ -107,6 +107,7 @@ class LLMClient:
             "anthropic": lambda: ChatAnthropic(model=self.model, anthropic_api_key=self.auth_config["api_key"], **common_params),
             "cohere": lambda: ChatCohere(model=self.model, cohere_api_key=self.auth_config["api_key"], **common_params),
             "huggingface": lambda: self._build_hf_chat_model(template_body, **common_params),
+            "huggingface_router": lambda: self._build_hf_router_chat_model(**openai_extra, **common_params),
             "azure": lambda: ChatOpenAI(model=self.model, openai_api_key=self.auth_config["api_key"], base_url=self.azure_endpoint, extra_body={"max_tokens": self.max_tokens, **template_body}, temperature=self.temperature, streaming=self.streaming),
         }
 
@@ -114,6 +115,19 @@ class LLMClient:
             raise ValueError(f"Unsupported provider: {self.provider}")
 
         return providers[self.provider]()
+
+    def _build_hf_router_chat_model(self, **common_params) -> BaseChatModel:
+        """Opt-in hosted chat routing without the Hub SDK's provider registry."""
+        model = self.model
+        if self.inference_provider and self.inference_provider != "auto" and ":" not in model:
+            model = f"{model}:{self.inference_provider}"
+        return ChatOpenAI(
+            model=model,
+            openai_api_key=self.auth_config["api_key"],
+            base_url="https://router.huggingface.co/v1",
+            default_headers={"X-HF-Bill-To": self.organization} if self.organization else {},
+            **common_params,
+        )
 
     def _build_hf_chat_model(self, template_body: dict, **common_params) -> BaseChatModel:
         """Helper to configure HuggingFace model for Serverless or TGI Endpoint."""
