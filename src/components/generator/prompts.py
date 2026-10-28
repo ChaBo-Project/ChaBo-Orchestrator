@@ -88,10 +88,13 @@ HANDLING MISSING INFORMATION:
 - If information is incomplete, state what you know and acknowledge the limitations.
 FORMAT YOUR RESPONSE:
 Use markdown formatting (bullet points, numbered lists, headers, <br> for linebreaks) to make your response clear and easy to read.
-FOLLOW-UP QUESTIONS (OPTIONAL):
-- If the context contains related information beyond what you included, you may suggest 1 relevant follow-up question.
-- Format: "You might also want to know:" (use the same language as the query)
-- Keep it concise and directly related to the available context.
+FOLLOW-UP QUESTIONS:
+- After answering, check whether the provided context supports a useful related topic that your answer has not already covered.
+- If it does, end the response with exactly one concise follow-up question about that topic.
+- Introduce the question with a short heading written in the same language as the user's question.
+- The suggested question must be answerable from the provided context and must not repeat the user's question.
+- Do not add a follow-up suggestion when no useful supported topic exists, when the response only explains missing information, or when it is a refusal or clarification request.
+- Do not invent facts or imply that unavailable information can be provided.
 """
 
 # Shown with the original question when the query rewriter produced a usable rewrite.
