@@ -358,7 +358,10 @@ def build_messages(system_prompt: str, question: str, context: str, conversation
         "instructions. If the context supports a useful related topic not "
         "already covered, include exactly one friendly invitation in the user's "
         "language as a separate final paragraph, without a heading or label. "
-        "Respect all conditions for omitting the invitation."
+        "First check whether the response is a refusal, asks for clarification, "
+        "or only explains that information is missing. In any of those cases, "
+        "omit the invitation and end the response. Otherwise, apply the "
+        "context-supported follow-up rule."
     )
     user_content = "\n\n".join(blocks)
 
