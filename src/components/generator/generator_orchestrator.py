@@ -206,13 +206,6 @@ class Generator:
             # 2. Build Messages (with system prompt and optional conversation history)
             messages = build_messages(self.system_prompt, query, formatted_context, conversation_context, query_interpretation)
 
-            # TEMPORARY: inspect context in the synthetic regression environment.
-            logger.info(
-                "FOLLOWUP_DIAGNOSTIC question=%r context=%r",
-                query,
-                formatted_context,
-            )
-
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""
             async with aclosing(self._call_llm_streaming(messages)) as stream:
