@@ -88,10 +88,15 @@ HANDLING MISSING INFORMATION:
 - If information is incomplete, state what you know and acknowledge the limitations.
 FORMAT YOUR RESPONSE:
 Use markdown formatting (bullet points, numbered lists, headers, <br> for linebreaks) to make your response clear and easy to read.
-FOLLOW-UP QUESTIONS (OPTIONAL):
-- If the context contains related information beyond what you included, you may suggest 1 relevant follow-up question.
-- Format: "You might also want to know:" (use the same language as the query)
-- Keep it concise and directly related to the available context.
+FOLLOW-UP QUESTIONS:
+- After answering, check whether the provided context supports a useful related topic that your answer has not already covered.
+- If it does, end the response with exactly one concise, friendly invitation to explore that topic, phrased as a question.
+- Write the invitation as a separate final paragraph without a heading, label, bullet point or bold text.
+- For an English question, use natural wording such as "Would you like to know when the application deadline is for this programme?" Adapt the topic to the provided context; do not copy this example when it is irrelevant.
+- Write the invitation in the same language as the USER QUESTION. Use that language throughout the entire response, regardless of the language of the retrieved documents or conversation history.
+- The suggested question must be answerable from the provided context and must not repeat the user's question.
+- Do not add a follow-up suggestion when no useful supported topic exists, when the response only explains missing information, or when it is a refusal or clarification request.
+- Do not invent facts or imply that unavailable information can be provided.
 """
 
 # Shown with the original question when the query rewriter produced a usable rewrite.
@@ -348,6 +353,16 @@ def build_messages(system_prompt: str, question: str, context: str, conversation
         blocks.append(f"### QUESTION INTERPRETATION\n{QUERY_INTERPRETATION_NOTE}\n{query_interpretation}")
     blocks.append(f"### USER QUESTION\n{question}")
     blocks.append(LANGUAGE_NUDGE)
+    blocks.append(
+        "Before finishing, apply the FOLLOW-UP QUESTIONS policy in the system "
+        "instructions. If the context supports a useful related topic not "
+        "already covered, include exactly one friendly invitation in the user's "
+        "language as a separate final paragraph, without a heading or label. "
+        "First check whether the response is a refusal, asks for clarification, "
+        "or only explains that information is missing. In any of those cases, "
+        "omit the invitation and end the response. Otherwise, apply the "
+        "context-supported follow-up rule."
+    )
     user_content = "\n\n".join(blocks)
 
     return [SystemMessage(content=system_content), HumanMessage(content=user_content)]
