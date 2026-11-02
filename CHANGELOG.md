@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.4](https://github.com/ChaBo-Project/ChaBo-Orchestrator/compare/chabo-rag-orchestrator-v0.9.3...chabo-rag-orchestrator-v0.9.4) (2026-11-02)
+
+
+### Features
+
+* add opt-in Hugging Face router provider ([96f7b21](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/96f7b21a02d563d7200d41e46c2817ab75ce45aa))
+* add opt-in Hugging Face router provider ([9cdc2de](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/9cdc2de6028ccbd0cdf8821c1f67977913698799))
+
 ## [0.9.3](https://github.com/ChaBo-Project/ChaBo-Orchestrator/compare/chabo-rag-orchestrator-v0.9.2...chabo-rag-orchestrator-v0.9.3) (2026-10-24)
 
 
