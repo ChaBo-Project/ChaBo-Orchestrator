@@ -52,6 +52,15 @@ async def retrieve_node(
 
     start_time = datetime.now()
 
+    # Only the authenticated, opt-in service adapter supplies this state key.
+    # An empty result must stay empty: never search the instance's default corpus.
+    if "supplied_documents" in state:
+        documents = state["supplied_documents"]
+        return {"raw_documents": documents, "metadata": {
+            **state.get("metadata", {}), "retrieval_success": True,
+            "retrieval_duration": 0.0, "retrieval_provider": "supplied",
+        }}
+
     # 1. Extract Query and Filters
     filters = state.get("metadata_filters")
     metadata = state.get("metadata", {})

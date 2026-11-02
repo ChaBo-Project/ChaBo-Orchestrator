@@ -233,6 +233,16 @@ compiled_graph = build_workflow(
 app = FastAPI(title="ChaBo RAG Orchestrator", version="1.0.0")
 app.add_middleware(ExecutionLoggingMiddleware)
 
+# Disabled unless an operator provisions a dedicated backend-only credential.
+# It does not change any public LangServe/OpenAI schema or default retrieval.
+if os.getenv("MANAGED_CONTEXT_KEY"):
+    from components.api.managed_context import build_managed_context_router
+    app.include_router(build_managed_context_router(
+        compiled_graph, key=os.environ["MANAGED_CONTEXT_KEY"], blocklist=blocklist,
+        blocklist_notice=BLOCKLIST_MESSAGE,
+        classification_config=output_classification_config,
+    ))
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
