@@ -24,21 +24,31 @@ def parse_citations(response: str) -> List[int]:
     logger.debug(f"Probable Citations found: {citation_numbers}")
     return citation_numbers
 
-def extract_sources(processed_results: List[Dict[str, Any]], cited_numbers: List[int]) -> List[Dict[str, Any]]:
-    """Extract sources that were cited in the response"""
-    if not cited_numbers:
+def extract_sources(
+    processed_results: List[Dict[str, Any]],
+    cited_numbers: List[int],
+    *,
+    preserve_positions: bool = False,
+) -> List[Dict[str, Any]]:
+    """Select cited sources, optionally including preceding entries to preserve positions."""
+    valid_numbers = sorted({
+        number for number in cited_numbers
+        if 1 <= number <= len(processed_results)
+    })
+    if not valid_numbers:
         return []
-    
+
+    if preserve_positions:
+        source_numbers = range(1, max(valid_numbers) + 1)
+    else:
+        source_numbers = valid_numbers
+
     cited_sources = []
-    for citation_num in cited_numbers:
-        source_index = citation_num - 1
-        
-        if 0 <= source_index < len(processed_results):
-            source = processed_results[source_index].copy()  # Make copy to avoid modifying original
-            source['_citation_number'] = citation_num  # Preserve original citation number
-            cited_sources.append(source)
-    #logger.debug(f"Extracted citations : {cited_sources}")
-    
+    for citation_num in source_numbers:
+        source = processed_results[citation_num - 1].copy()
+        source['_citation_number'] = citation_num
+        cited_sources.append(source)
+
     return cited_sources
 
 def clean_citations(response: str) -> str:

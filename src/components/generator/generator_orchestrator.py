@@ -171,7 +171,9 @@ class Generator:
                 result = {"answer": answer}
                 if processed_results:
                     cited_numbers = parse_citations(answer)
-                    cited_sources = extract_sources(processed_results, cited_numbers)
+                    cited_sources = extract_sources(
+                        processed_results, cited_numbers, preserve_positions=True
+                    )
                     result["sources"] = create_sources_list(cited_sources, 
                                         title_metadata_fields=self.title_metadata_fields,
                                         link_metadata_field=self.link_metadata_field)
@@ -228,7 +230,9 @@ class Generator:
                 # Add sources if available
                 if processed_results:
                     cited_numbers = parse_citations(cleaned_response)
-                    cited_sources = extract_sources(processed_results, cited_numbers)
+                    cited_sources = extract_sources(
+                        processed_results, cited_numbers, preserve_positions=True
+                    )
                     sources = create_sources_list(cited_sources,
                                 title_metadata_fields=self.title_metadata_fields,
                                 link_metadata_field=self.link_metadata_field)
