@@ -205,6 +205,15 @@ class Generator:
 
             # 2. Build Messages (with system prompt and optional conversation history)
             messages = build_messages(self.system_prompt, query, formatted_context, conversation_context, query_interpretation)
+            # Temporary diagnostics for this exact synthetic test question.
+            if query.strip() == "What is the grant amount for Project Orion?":
+                for index, message in enumerate(messages):
+                    logger.info(
+                        "TEMP_FOLLOWUP_INPUT index=%s role=%s content=%r",
+                        index,
+                        message.type,
+                        message.content,
+                    )
 
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""
