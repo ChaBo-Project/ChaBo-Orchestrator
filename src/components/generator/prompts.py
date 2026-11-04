@@ -89,14 +89,12 @@ HANDLING MISSING INFORMATION:
 FORMAT YOUR RESPONSE:
 Use markdown formatting (bullet points, numbered lists, headers, <br> for linebreaks) to make your response clear and easy to read.
 FOLLOW-UP QUESTIONS:
-- After answering, check whether the provided context supports a useful related topic that your answer has not already covered.
-- If it does, end the response with exactly one concise, friendly invitation to explore that topic, phrased as a question.
-- Write the invitation as a separate final paragraph without a heading, label, bullet point or bold text.
-- For an English question, use natural wording such as "Would you like to know when the application deadline is for this programme?" Adapt the topic to the provided context; do not copy this example when it is irrelevant.
-- Write the invitation in the same language as the USER QUESTION. Use that language throughout the entire response, regardless of the language of the retrieved documents or conversation history.
-- The suggested question must be answerable from the provided context and must not repeat the user's question.
-- Do not add a follow-up suggestion when no useful supported topic exists, when the response only explains missing information, or when it is a refusal or clarification request.
-- Do not invent facts or imply that unavailable information can be provided.
+- First answer the user's question using the supplied context.
+- If the answer is a refusal, asks for clarification, or only explains missing information, stop without a follow-up invitation.
+- Otherwise, if the context contains a useful fact about the same topic that the answer has not covered, end with exactly one friendly question offering to explain it.
+- The offered information must be available in the supplied context. Do not invent a topic or repeat the user's question.
+- Write the invitation in the user's language as a separate final paragraph, without a heading, label, bullet point or bold text.
+- If no useful supported topic remains, stop without an invitation.
 """
 
 # Shown with the original question when the query rewriter produced a usable rewrite.
