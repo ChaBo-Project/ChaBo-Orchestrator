@@ -88,13 +88,6 @@ HANDLING MISSING INFORMATION:
 - If information is incomplete, state what you know and acknowledge the limitations.
 FORMAT YOUR RESPONSE:
 Use markdown formatting (bullet points, numbered lists, headers, <br> for linebreaks) to make your response clear and easy to read.
-FOLLOW-UP QUESTIONS:
-- First answer the user's question using the supplied context.
-- If the answer is a refusal, asks for clarification, or only explains missing information, stop without a follow-up invitation.
-- Otherwise, if the context contains a useful fact about the same topic that the answer has not covered, end with exactly one friendly question offering to explain it.
-- The offered information must be available in the supplied context. Do not invent a topic or repeat the user's question.
-- Write the invitation in the user's language as a separate final paragraph, without a heading, label, bullet point or bold text.
-- If no useful supported topic remains, stop without an invitation.
 """
 
 # Shown with the original question when the query rewriter produced a usable rewrite.
@@ -351,6 +344,20 @@ def build_messages(system_prompt: str, question: str, context: str, conversation
         blocks.append(f"### QUESTION INTERPRETATION\n{QUERY_INTERPRETATION_NOTE}\n{query_interpretation}")
     blocks.append(f"### USER QUESTION\n{question}")
     blocks.append(LANGUAGE_NUDGE)
+    blocks.append(
+        "FOLLOW-UP QUESTIONS:\n"
+        "- First answer the user's question using the supplied context.\n"
+        "- If the answer is a refusal, asks for clarification, or only explains "
+        "missing information, stop without a follow-up invitation.\n"
+        "- Otherwise, if the context contains a useful fact about the same topic "
+        "that the answer has not covered, end with exactly one friendly question "
+        "offering to explain it.\n"
+        "- The offered information must be available in the supplied context. "
+        "Do not invent a topic or repeat the user's question.\n"
+        "- Write the invitation in the user's language as a separate final "
+        "paragraph, without a heading, label, bullet point or bold text.\n"
+        "- If no useful supported topic remains, stop without an invitation."
+    )
     user_content = "\n\n".join(blocks)
 
     return [SystemMessage(content=system_content), HumanMessage(content=user_content)]
