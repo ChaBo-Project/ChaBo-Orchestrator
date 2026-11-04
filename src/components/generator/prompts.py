@@ -353,16 +353,6 @@ def build_messages(system_prompt: str, question: str, context: str, conversation
         blocks.append(f"### QUESTION INTERPRETATION\n{QUERY_INTERPRETATION_NOTE}\n{query_interpretation}")
     blocks.append(f"### USER QUESTION\n{question}")
     blocks.append(LANGUAGE_NUDGE)
-    blocks.append(
-        "Before finishing, apply the FOLLOW-UP QUESTIONS policy in the system "
-        "instructions. If the context supports a useful related topic not "
-        "already covered, include exactly one friendly invitation in the user's "
-        "language as a separate final paragraph, without a heading or label. "
-        "First check whether the response is a refusal, asks for clarification, "
-        "or only explains that information is missing. In any of those cases, "
-        "omit the invitation and end the response. Otherwise, apply the "
-        "context-supported follow-up rule."
-    )
     user_content = "\n\n".join(blocks)
 
     return [SystemMessage(content=system_content), HumanMessage(content=user_content)]
