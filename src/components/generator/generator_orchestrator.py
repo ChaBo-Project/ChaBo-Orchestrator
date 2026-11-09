@@ -31,7 +31,7 @@ class Generator:
     }
 
     def __init__(self, config_path: str = "params.cfg", llm_client: Optional[LLMClient] = None,
-                 instance_guidelines: str = "", **kwargs):
+                 instance_guidelines: str = "", instance_user_instructions: str = "", **kwargs):
         logger.info("Initializing Generator component with config precedence...")
 
         # 2. Load Configuration
@@ -70,6 +70,8 @@ class Generator:
 
         # 5. System prompt: FRAMEWORK_VALUES + BASE_PROMPT + optional instance_guidelines.
         self.system_prompt = build_system_prompt(instance_guidelines)
+        # 6. Optional per-deployment instructions for the user message (see build_messages).
+        self.instance_user_instructions = instance_user_instructions
 
         logger.info(f"Generator initialized with provider: {self.llm_client.provider}, model: {self.llm_client.model}")
         logger.debug(f"Metadata Config: Context={self.context_metadata_fields}, Title={self.title_metadata_fields}")
@@ -160,7 +162,8 @@ class Generator:
                metadata_fields_to_include=self.context_metadata_fields)
 
             # 2. Build Messages (with system prompt and optional conversation history)
-            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context, query_interpretation)
+            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context,
+                                      query_interpretation, self.instance_user_instructions)
 
 
 
@@ -206,7 +209,8 @@ class Generator:
                             metadata_fields_to_include =self.context_metadata_fields)
 
             # 2. Build Messages (with system prompt and optional conversation history)
-            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context, query_interpretation)
+            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context,
+                                      query_interpretation, self.instance_user_instructions)
 
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""

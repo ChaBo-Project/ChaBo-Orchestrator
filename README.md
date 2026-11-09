@@ -208,6 +208,8 @@ The generator's system prompt is composed from three layers, in this order:
 
 If an instance guideline ever conflicts with a Framework Value, the composed prompt tells the model the Framework Value takes precedence.
 
+`BASE_PROMPT` has no follow-up-question policy: by default answers end without suggesting a follow-up question. A deployment that wants follow-ups (or other short answer-shaping rules) adds them via `instance.yaml` — in `instance_guidelines` (system prompt), or in `instance_user_instructions`, which places them in the user message after the question and before the closing language instruction. Prefer `instance_guidelines`; use `instance_user_instructions` only for short rules that the model follows unreliably from the system prompt, since text placed next to the question carries strong weight and can override `BASE_PROMPT` behaviour (e.g. citations) if it contradicts it.
+
 **Output-guard enforcement of these two layers is asymmetric, by design:** the windowed output classifier (above) always checks the answer against `FRAMEWORK_VALUES` (a violation always blocks, using `classification_message` — not configurable). It can *additionally* check compliance with your instance guidelines, but only under `mode = llm` (the `classifier`/Qwen3Guard-Gen backend is a fixed-taxonomy model and cannot evaluate custom instance text at all). The consequence for instance-guideline non-compliance is your own choice:
 
 ```ini
@@ -273,13 +275,13 @@ from today.
 |---|---|---|---|
 | `params.override.cfg` | 1 — pipeline knobs | INI, same `[section]key=value` shape as `params.cfg` | Retrieval tuning, endpoints, provider/model selection, guardrail toggles. Layered on top of `params.cfg`; later value wins per key. |
 | `prompt_overrides.md` | 1 — prompt engineering | Markdown, `## section_name` headers | `query_rewrite_steps`, `filter_extraction_steps` — overrides the *decision-making* portion of those two prompts only. The output JSON schema/contract is always core-owned and never overridden, so a bad override can degrade quality but can't break parsing. |
-| `instance.yaml` | 2 — safe content | YAML, four independent top-level keys | `filters` (valid values for `[metadata_filters] filterable_fields`), `db_context` (`abstract`/`glossary` for the query rewriter), `blocklist` (`{lang: [terms]}`, additions on top of the shipped list — never removes from it), `instance_guidelines` (plain text appended to the system prompt, subordinate to the framework's non-negotiable content rules). |
+| `instance.yaml` | 2 — safe content | YAML, five independent top-level keys | `filters` (valid values for `[metadata_filters] filterable_fields`), `db_context` (`abstract`/`glossary` for the query rewriter), `blocklist` (`{lang: [terms]}`, additions on top of the shipped list — never removes from it), `instance_guidelines` (plain text appended to the system prompt, subordinate to the framework's non-negotiable content rules), `instance_user_instructions` (short plain-text rules placed in the user message after the question — see "System Prompt" above). |
 
 **Tier 1 is "change at your own risk."** These values affect pipeline behavior directly — a
 bad edit can degrade retrieval or generation quality, not just wording. Tier 2 is safe for a
 non-engineer to edit: worst case is a less helpful answer, never a broken pipeline.
 
-`instance.yaml` example, showing all four keys:
+`instance.yaml` example, showing all five keys:
 
 ```yaml
 filters:
@@ -305,6 +307,10 @@ blocklist:
 
 instance_guidelines: |
   Keep answers focused on crop cultivation topics. Prefer metric units.
+
+instance_user_instructions: |
+  If the context covers a useful related topic your answer did not, end with one short
+  follow-up question offering to explain it. Skip it when you only explain missing information.
 ```
 
 Note: `db_context`'s `target_language` for cross-lingual rewriting is **not** part of this
