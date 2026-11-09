@@ -17,6 +17,7 @@ from components.generator.sources import (
 )
 from components.orchestration.renderers import (
     CHATUI_PLACEHOLDER_URI,
+    citation_list,
     format_sources_markdown,
 )
 
@@ -93,3 +94,14 @@ def test_existing_chatui_still_labels_chips_correctly(answer):
 
     for label, title in chatui_chip_labels(answer, block):
         assert title == FILENAMES[label - 1]
+
+
+@pytest.mark.parametrize("answer, cited", CASES)
+@pytest.mark.parametrize("with_links", [False, True])
+def test_citations_array_resolves_each_number_to_its_document(answer, cited, with_links):
+    citations = citation_list(build_sources(answer, with_links))
+
+    assert len(citations) == (max(cited) if cited else 0)
+    for number in cited:
+        filename = FILENAMES[number - 1]
+        assert citations[number - 1] == (f"https://example.org/{filename}" if with_links else filename)

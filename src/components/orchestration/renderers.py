@@ -89,16 +89,21 @@ def citation_list(sources_collected) -> List[str]:
     Flatten sources to the string list used by the non-standard `citations` field.
 
     Perplexity-style `citations` is an array of strings and is what OpenWebUI's ad hoc
-    support reads. Sources without a URI contribute their title so the array stays aligned
-    positionally with the `[N]` markers in the answer.
+    support reads. Clients resolve `[n]` to `citations[n - 1]`, so entry n-1 is the source
+    numbered n (its `number`, falling back to its position); numbers that weren't cited
+    are padded with "". Sources without a URI contribute their title.
     """
-    citations = []
-    for source in sources_collected or []:
+    by_number: Dict[int, str] = {}
+    for position, source in enumerate(sources_collected or [], 1):
         if isinstance(source, dict):
-            citations.append(source.get("uri") or source.get("title", "Unknown"))
+            number = source.get("number")
+            number = position if number is None else number
+            by_number[number] = source.get("uri") or source.get("title", "Unknown")
         else:
-            citations.append(str(source))
-    return citations
+            by_number[position] = str(source)
+    if not by_number:
+        return []
+    return [by_number.get(n, "") for n in range(1, max(by_number) + 1)]
 
 
 class BaseRenderer:

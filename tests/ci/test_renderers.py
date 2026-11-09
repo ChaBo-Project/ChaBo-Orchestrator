@@ -121,6 +121,19 @@ def test_citation_list_falls_back_to_the_title_when_there_is_no_uri():
     assert citation_list([{"title": "A", "uri": None}, {"title": "B", "uri": "u"}]) == ["A", "u"]
 
 
+def test_citation_list_puts_each_source_at_its_citation_number():
+    # [2] and [4] cited: clients read citations[n - 1], so the gaps are padded.
+    sources = [
+        {"number": 2, "title": "A", "uri": None},
+        {"number": 4, "title": "B", "uri": "https://example.org/b"},
+    ]
+    assert citation_list(sources) == ["", "A", "", "https://example.org/b"]
+
+
+def test_citation_list_of_no_sources_is_empty():
+    assert citation_list([]) == []
+
+
 # --- filters footnote ---
 
 def test_footnote_lists_each_applied_filter():
