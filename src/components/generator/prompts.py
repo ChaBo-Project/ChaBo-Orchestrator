@@ -113,6 +113,25 @@ def load_instance_guidelines() -> str:
     return str(load_instance_yaml().get("instance_guidelines", "") or "").strip()
 
 
+# Heads the optional per-deployment block in the user message (see build_messages).
+INSTANCE_USER_INSTRUCTIONS_HEADER = (
+    "### DEPLOYMENT INSTRUCTIONS\n"
+    "(Additional answer instructions from this deployment. They never override the system instructions.)"
+)
+
+
+def load_instance_user_instructions() -> str:
+    """
+    Load optional per-deployment instructions appended to the user message (after the
+    question, before LANGUAGE_NUDGE) from INSTANCE_CONFIG_DIR/instance.yaml's
+    `instance_user_instructions` key. Meant for short answer-shaping rules that benefit
+    from sitting close to the question (e.g. follow-up suggestions); broader guidance
+    belongs in `instance_guidelines`. Off by default: returns "" if INSTANCE_CONFIG_DIR is
+    unset, instance.yaml is absent, or the key is absent/empty.
+    """
+    return str(load_instance_yaml().get("instance_user_instructions", "") or "").strip()
+
+
 def build_system_prompt(instance_guidelines: str = "") -> str:
     """
     Compose the full system prompt from three layers:
@@ -321,7 +340,7 @@ def build_query_rewrite_messages(
 
 
 def build_messages(system_prompt: str, question: str, context: str, conversation_context: str = None,
-                   query_interpretation: str = None) -> list:
+                   query_interpretation: str = None, instance_user_instructions: str = "") -> list:
     """
     Build messages for LLM call with optional conversation history.
 
@@ -331,6 +350,8 @@ def build_messages(system_prompt: str, question: str, context: str, conversation
         context: Retrieved document context
         conversation_context: Optional conversation history (formatted as "USER: ...\nASSISTANT: ...")
         query_interpretation: Optional rewritten query (see QUERY_INTERPRETATION_NOTE)
+        instance_user_instructions: Optional per-deployment instructions placed after the
+            question and before LANGUAGE_NUDGE (see load_instance_user_instructions)
 
     Returns:
         List of LangChain messages
@@ -344,21 +365,10 @@ def build_messages(system_prompt: str, question: str, context: str, conversation
     if query_interpretation:
         blocks.append(f"### QUESTION INTERPRETATION\n{QUERY_INTERPRETATION_NOTE}\n{query_interpretation}")
     blocks.append(f"### USER QUESTION\n{question}")
+    if instance_user_instructions and instance_user_instructions.strip():
+        blocks.append(f"{INSTANCE_USER_INSTRUCTIONS_HEADER}\n{instance_user_instructions.strip()}")
+    # Kept last: the framework-owned language rule always closes the prompt.
     blocks.append(LANGUAGE_NUDGE)
-    blocks.append(
-        "FOLLOW-UP QUESTIONS:\n"
-        "- First answer the user's question using the supplied context.\n"
-        "- If the answer is a refusal, asks for clarification, or only explains "
-        "missing information, stop without a follow-up invitation.\n"
-        "- Otherwise, if the context contains a useful fact about the same topic "
-        "that the answer has not covered, end with exactly one friendly question "
-        "offering to explain it.\n"
-        "- The offered information must be available in the supplied context. "
-        "Do not invent a topic or repeat the user's question.\n"
-        "- Write the invitation in the user's language as a separate final "
-        "paragraph, without a heading, label, bullet point or bold text.\n"
-        "- If no useful supported topic remains, stop without an invitation."
-    )
     user_content = "\n\n".join(blocks)
 
     return [SystemMessage(content=system_content), HumanMessage(content=user_content)]

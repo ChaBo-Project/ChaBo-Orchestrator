@@ -1,4 +1,4 @@
-# Tier-2 safe content for the `<INSTANCE_NAME>` instance. All four top-level keys are
+# Tier-2 safe content for the `<INSTANCE_NAME>` instance. All five top-level keys are
 # independent and optional — omit any you don't need. See chabo/README.md's
 # "Instance Configuration" section for the full contract and validation rules.
 
@@ -21,3 +21,12 @@
 #   Optional per-deployment system prompt guidance, appended after the
 #   framework's base prompt. Can only ADD to the prompt, never override
 #   FRAMEWORK_VALUES (code-only, not configurable here).
+
+# instance_user_instructions: |
+#   Optional short answer-shaping rules placed in the user message, after the
+#   question and before the closing language instruction. Prefer
+#   instance_guidelines; use this only for rules the model follows unreliably
+#   from the system prompt. The base prompt has no follow-up policy, e.g.:
+#   If the context covers a useful related topic your answer did not, end with
+#   one short follow-up question offering to explain it. Skip it when you only
+#   explain missing information.
