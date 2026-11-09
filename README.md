@@ -50,7 +50,7 @@ gates retrieval on a safe verdict.
 
 > **Guardrails** are two independent, opt-in defenses. The **input guard** classifies the query for prompt-injection/jailbreak and harmful content before retrieval (runs in parallel with rewrite/filter, ≈zero added latency); an unsafe verdict short-circuits to a fixed message. The **output guard** screens the streamed answer against a multilingual blocklist and replaces it with a notice on a hit. Configured under `[input_guard]` / `[output_guard]`.
 
-**Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere, Azure OpenAI
+**Supported LLM Providers:** HuggingFace (Inference Endpoints/serverless, or the HF router via `huggingface_router`), OpenAI, Anthropic, Cohere, Azure OpenAI
 
 ## Deployment
 
@@ -95,6 +95,14 @@ filterable_fields = project_id:str,year:int,tags:list
 MAX_TURNS = 3
 MAX_CHARS = 8000
 ```
+
+Hosted chat can opt into `PROVIDER = huggingface_router` using `HF_TOKEN`.
+This uses `https://router.huggingface.co/v1` and avoids the installed Hub SDK's
+provider registry. Set `INFERENCE_PROVIDER = deepinfra` to select that provider,
+or `auto` to let the router choose. A suffix already present in `MODEL` takes
+precedence. Optional `ORGANIZATION` supplies the `X-HF-Bill-To` header.
+Rate-limit (429) and 5xx errors are retried up to 2 times by the OpenAI SDK before failing.
+Existing providers and defaults are unchanged.
 
 #### Metadata Filters Setup
 
@@ -226,7 +234,7 @@ Pass API keys as environment variables at runtime:
 
 **Azure:** every task using `provider = azure` needs its own endpoint: `[generator] AZURE_ENDPOINT` and `llm_azure_endpoint` in `[metadata_filters]` / `[query_rewriter]` / `[input_guard]` / `[output_guard]` (env: `GENERATOR_AZURE_ENDPOINT`, `FILTER_EXTRACTION_LLM_AZURE_ENDPOINT`, `QUERY_REWRITE_LLM_AZURE_ENDPOINT`, `INPUT_GUARD_LLM_AZURE_ENDPOINT`, `OUTPUT_CLASSIFICATION_LLM_AZURE_ENDPOINT`). It must be a full `https://` URL; ChaBo refuses to start otherwise, to avoid requests (and the Azure key) going to api.openai.com, the OpenAI SDK's default.
 
-**Reasoning off / chat-template options (optional):** any task can send extra chat-template variables as a JSON object: `[generator] CHAT_TEMPLATE_KWARGS` and `llm_chat_template_kwargs` in the other four sections (env: `GENERATOR_CHAT_TEMPLATE_KWARGS`, `FILTER_EXTRACTION_LLM_CHAT_TEMPLATE_KWARGS`, …). Example: `{"enable_thinking": false}` turns off reasoning on Qwen3-style models, cutting time to first token from ~15 s to ~1 s; reasoning tokens are invisible in the answer but still billed. Supported for `huggingface`, `openai` and `azure` (OpenAI-compatible servers such as the HF router, vLLM or SGLang); other providers fail at startup if it is set. Unset = requests unchanged. Which keys a model accepts depends on its chat template.
+**Reasoning off / chat-template options (optional):** any task can send extra chat-template variables as a JSON object: `[generator] CHAT_TEMPLATE_KWARGS` and `llm_chat_template_kwargs` in the other four sections (env: `GENERATOR_CHAT_TEMPLATE_KWARGS`, `FILTER_EXTRACTION_LLM_CHAT_TEMPLATE_KWARGS`, …). Example: `{"enable_thinking": false}` turns off reasoning on Qwen3-style models, cutting time to first token from ~15 s to ~1 s; reasoning tokens are invisible in the answer but still billed. Supported for `huggingface`, `huggingface_router`, `openai` and `azure` (OpenAI-compatible servers such as the HF router, vLLM or SGLang); other providers fail at startup if it is set. Unset = requests unchanged. Which keys a model accepts depends on its chat template.
 
 #### Build and Run
 
