@@ -36,17 +36,28 @@ def parse_citations(response: str) -> List[int]:
     logger.debug(f"Probable Citations found: {citation_numbers}")
     return citation_numbers
 
+# [generator] SOURCES_DISPLAY values: which sources are listed under the answer.
+SOURCES_DISPLAY_MODES = ("cited", "all_retrieved")
+
+
 def extract_sources(
     processed_results: List[Dict[str, Any]],
     cited_numbers: List[int],
+    mode: str = "cited",
 ) -> List[Dict[str, Any]]:
     """
-    Select the cited sources in ascending citation order.
+    Select the sources to list, in ascending citation order.
+
+    `mode` (see SOURCES_DISPLAY_MODES): "cited" keeps only the sources the answer cites;
+    "all_retrieved" keeps every retrieved document, cited or not.
 
     Each returned copy carries its citation number in `_citation_number` (its position in
     the context the LLM saw), so later steps can label it with the same `[n]` the answer
-    uses. Numbers outside the retrieved results are skipped.
+    uses. Cited numbers outside the retrieved results are skipped.
     """
+    if mode not in SOURCES_DISPLAY_MODES:
+        raise ValueError(f"Unknown sources display mode {mode!r}; expected one of {SOURCES_DISPLAY_MODES}")
+
     valid_numbers = sorted({
         number for number in cited_numbers
         if 1 <= number <= len(processed_results)
@@ -57,6 +68,9 @@ def extract_sources(
             f"Answer cites {unmatched}, but only {len(processed_results)} documents were "
             f"retrieved; those citations have no source."
         )
+
+    if mode == "all_retrieved":
+        valid_numbers = list(range(1, len(processed_results) + 1))
 
     cited_sources = []
     for citation_num in valid_numbers:

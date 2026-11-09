@@ -9,6 +9,8 @@ Covers:
 - normalising the various citation styles into plain bracket numbers
 """
 
+import pytest
+
 from components.generator.sources import (
     parse_citations,
     extract_sources,
@@ -83,6 +85,19 @@ def test_gapped_citations_keep_their_own_numbers():
 
     assert [(s["_citation_number"], s["title"]) for s in sources] == [(1, "A"), (3, "C")]
     assert all("_citation_number" not in result for result in results)
+
+
+def test_all_retrieved_mode_keeps_every_source_with_its_number():
+    results = [{"title": "A"}, {"title": "B"}, {"title": "C"}]
+
+    sources = extract_sources(results, [3], mode="all_retrieved")
+
+    assert [(s["_citation_number"], s["title"]) for s in sources] == [(1, "A"), (2, "B"), (3, "C")]
+
+
+def test_unknown_display_mode_is_rejected():
+    with pytest.raises(ValueError):
+        extract_sources([{"title": "A"}], [1], mode="everything")
 
 
 def test_only_valid_citation_numbers_are_kept():
