@@ -67,7 +67,7 @@ class DeployedOpenAITests(unittest.TestCase):
 
         source_numbers = {
             int(value)
-            for value in re.findall(r"(?m)^(\d+)\.\s", sources)
+            for value in re.findall(r"(?m)^- \[(\d+)\]\s", sources)
         }
         self.assertTrue(references, "The answer contained no citations")
         self.assertTrue(
@@ -110,9 +110,21 @@ class DeployedOpenAITests(unittest.TestCase):
         self.assertIsInstance(result["citations"], list)
         self.assertTrue(result["citations"], "The citations list is empty")
 
+        # citations[n - 1] is source n; uncited numbers below the highest are padded with "".
+        text = answer.split("**Sources:**", 1)[0]
+        references = {
+            int(value)
+            for group in re.findall(r"\[(\d+(?:\s*,\s*\d+)*)\]", text)
+            for value in group.split(",")
+        }
         for citation in result["citations"]:
             self.assertIsInstance(citation, str)
-            self.assertTrue(citation.strip(), "A citation is empty")
+        for number in references:
+            self.assertGreaterEqual(len(result["citations"]), number)
+            self.assertTrue(
+                result["citations"][number - 1].strip(),
+                f"Citation [{number}] has no entry in the citations array",
+            )
         return answer
 
     def test_models_returns_deployment_model(self):
