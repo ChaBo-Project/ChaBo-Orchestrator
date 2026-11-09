@@ -31,6 +31,24 @@ def test_text_without_citations_returns_an_empty_list():
     assert parse_citations("no citations here") == []
 
 
+def test_expands_citation_ranges():
+    assert parse_citations("See [1-3] and [5–6].") == [1, 2, 3, 5, 6]
+
+
+def test_expands_ranges_inside_grouped_citations():
+    assert parse_citations("See [1, 4-5].") == [1, 4, 5]
+
+
+def test_ignores_reversed_and_overly_wide_ranges():
+    assert parse_citations("Between [5-2] and [1900-2024].") == []
+
+
+def test_unmatched_citations_are_logged(caplog):
+    with caplog.at_level("WARNING"):
+        extract_sources([{"title": "A"}], [1, 7])
+    assert "[7]" in caplog.text
+
+
 # --- extract_sources: keeping only the sources that were cited ---
 
 def test_returns_only_the_cited_sources_with_their_number():

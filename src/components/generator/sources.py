@@ -8,19 +8,31 @@ from langchain_core.documents import Document
 # ---------------------------------------------------------------------
 # Core Processing Functions
 # ---------------------------------------------------------------------
+# Longest citation range ("[1-3]") that is expanded; anything wider is not a citation
+# (e.g. a span of years) and is ignored.
+_MAX_CITATION_RANGE = 50
+
+
 def parse_citations(response: str) -> List[int]:
-    """Parse citation numbers from response text, handling both [1] and [1,2,3] formats"""
-    # Match both single citations [1] and comma-separated citations [1,2,3,4,5]
-    citation_pattern = r'\[([\d,\s]+)\]'
+    """
+    Parse citation numbers from response text.
+
+    Handles single `[1]`, grouped `[1,2,3]` / `[1, 3]` and ranged `[1-3]` / `[1–3]`
+    citations, including mixes such as `[1, 3-5]`. Returns sorted unique numbers.
+    """
+    citation_pattern = r'\[([\d,\s\-–]+)\]'
     matches = re.findall(citation_pattern, response)
 
     citation_numbers = set()
     for match in matches:
-        # Split by comma and extract all numbers
-        numbers = re.findall(r'\d+', match)
-        citation_numbers.update(int(num) for num in numbers)
+        for part in match.split(','):
+            bounds = [int(n) for n in re.findall(r'\d+', part)]
+            if len(bounds) == 1:
+                citation_numbers.add(bounds[0])
+            elif len(bounds) == 2 and 0 <= bounds[1] - bounds[0] <= _MAX_CITATION_RANGE:
+                citation_numbers.update(range(bounds[0], bounds[1] + 1))
 
-    citation_numbers = sorted(list(citation_numbers))
+    citation_numbers = sorted(citation_numbers)
     logger.debug(f"Probable Citations found: {citation_numbers}")
     return citation_numbers
 
@@ -39,6 +51,12 @@ def extract_sources(
         number for number in cited_numbers
         if 1 <= number <= len(processed_results)
     })
+    unmatched = sorted(set(cited_numbers) - set(valid_numbers))
+    if unmatched:
+        logger.warning(
+            f"Answer cites {unmatched}, but only {len(processed_results)} documents were "
+            f"retrieved; those citations have no source."
+        )
 
     cited_sources = []
     for citation_num in valid_numbers:
