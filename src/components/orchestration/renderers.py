@@ -58,7 +58,12 @@ def format_filters_footnote(filters: Dict[str, Any], narrowed: bool) -> str:
 
 def format_sources_markdown(sources_collected, placeholder_uri: Optional[str] = None) -> str:
     """
-    Render collected sources as a markdown list.
+    Render collected sources as a markdown list, one `- [n] [title](uri)` line per source.
+
+    `n` is the source's citation number (`number`, the `[n]` the answer uses for it), so the
+    list stays aligned with the answer when the cited numbers have gaps. It is a bullet list
+    with explicit numbers rather than an ordered `1.` list because markdown renumbers ordered
+    lists from their first item. Sources without a `number` fall back to their position.
 
     `create_sources_list()` reports `uri=None` for a source with no link, and what that looks
     like on the wire is the renderer's call: pass `placeholder_uri` for a frontend that only
@@ -66,13 +71,16 @@ def format_sources_markdown(sources_collected, placeholder_uri: Optional[str] = 
     CHATUI_PLACEHOLDER_URI), leave it unset to print an unlinked title.
     """
     sources_text = "\n\n**Sources:**\n"
-    for i, source in enumerate(sources_collected, 1):
+    for position, source in enumerate(sources_collected, 1):
         if isinstance(source, dict):
+            number = source.get("number")
+            number = position if number is None else number
             title = source.get("title", "Unknown")
             uri = source.get("uri") or placeholder_uri
-            sources_text += f"{i}. [{title}]({uri})\n" if uri else f"{i}. {title}\n"
+            entry = f"[{title}]({uri})" if uri else title
         else:
-            sources_text += f"{i}. {str(source)}\n"
+            number, entry = position, str(source)
+        sources_text += f"- [{number}] {entry}\n"
     return sources_text
 
 
