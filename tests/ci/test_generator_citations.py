@@ -7,17 +7,17 @@ from components.generator import generator_orchestrator as generator_module
 
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize(
-    "answer, expected_count",
+    "answer, expected_numbers",
     [
-        ("Grant [1].", 1),
-        ("Grant [1]. Induction [3].", 3),
-        ("Induction [3].", 3),
-        ("Both documents [1, 3].", 3),
-        ("No citations.", 0),
+        ("Grant [1].", [1]),
+        ("Grant [1]. Induction [3].", [1, 3]),
+        ("Induction [3].", [3]),
+        ("Both documents [1, 3].", [1, 3]),
+        ("No citations.", []),
     ],
 )
-def test_generator_preserves_source_positions(
-    monkeypatch, streaming, answer, expected_count
+def test_generator_returns_cited_sources_with_their_numbers(
+    monkeypatch, streaming, answer, expected_numbers
 ):
     filenames = ["grant.txt", "unused.txt", "induction.txt"]
     documents = [
@@ -83,6 +83,6 @@ def test_generator_preserves_source_positions(
         sources = result["sources"]
 
     assert sources == [
-        {"title": filename, "uri": None}
-        for filename in filenames[:expected_count]
+        {"number": number, "title": filenames[number - 1], "uri": None}
+        for number in expected_numbers
     ]

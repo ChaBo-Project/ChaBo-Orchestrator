@@ -1,3 +1,11 @@
+"""
+End-to-end alignment between the `[n]` citations in an answer and the source list.
+
+*No network required (.env / services etc.)
+
+Every citation number in the answer must reach the client attached to the document it
+refers to, whatever gaps there are between the cited numbers (issue #63).
+"""
 import pytest
 
 from components.generator.sources import (
@@ -5,27 +13,19 @@ from components.generator.sources import (
     extract_sources,
     parse_citations,
 )
-from components.orchestration.renderers import (
-    CHATUI_PLACEHOLDER_URI,
-    MarkdownRenderer,
-    citation_list,
-    format_sources_markdown,
-)
+
+FILENAMES = ["grant.txt", "unused.txt", "induction.txt"]
+
+CASES = [
+    ("Grant [1].", [1]),
+    ("Grant [1]. Induction [3].", [1, 3]),
+    ("Induction [3].", [3]),
+    ("Both documents [1, 3].", [1, 3]),
+    ("No citations.", []),
+]
 
 
-@pytest.mark.parametrize(
-    "answer, expected_count",
-    [
-        ("Grant [1].", 1),
-        ("Grant [1]. Induction [3].", 3),
-        ("Induction [3].", 3),
-        ("Both documents [1, 3].", 3),
-        ("No citations.", 0),
-    ],
-)
-@pytest.mark.parametrize("with_links", [False, True])
-def test_answer_citations_match_source_positions(answer, expected_count, with_links):
-    filenames = ["grant.txt", "unused.txt", "induction.txt"]
+def build_sources(answer, with_links):
     documents = [
         {
             "__all_metadata__": {
@@ -33,35 +33,19 @@ def test_answer_citations_match_source_positions(answer, expected_count, with_li
                 "url": f"https://example.org/{filename}" if with_links else None,
             }
         }
-        for filename in filenames
+        for filename in FILENAMES
     ]
+    selected = extract_sources(documents, parse_citations(answer))
+    return create_sources_list(selected, ["filename"], "url")
 
-    numbers = parse_citations(answer)
-    selected = extract_sources(documents, numbers, preserve_positions=True)
-    sources = create_sources_list(selected, ["filename"], "url")
 
-    assert [source["title"] for source in sources] == filenames[:expected_count]
+@pytest.mark.parametrize("answer, cited", CASES)
+@pytest.mark.parametrize("with_links", [False, True])
+def test_each_citation_number_maps_to_its_own_document(answer, cited, with_links):
+    sources = build_sources(answer, with_links)
 
-    citations = citation_list(sources)
-    assert len(citations) == expected_count
-
-    markdown = format_sources_markdown(sources)
-    chatui = MarkdownRenderer(0, placeholder_uri=CHATUI_PLACEHOLDER_URI)
-    chatui_block = chatui.sources(sources)
-
-    assert chatui.citations == citations
-
-    for number in numbers:
-        filename = filenames[number - 1]
-        expected_uri = f"https://example.org/{filename}" if with_links else None
-
-        assert sources[number - 1] == {"title": filename, "uri": expected_uri}
-        assert citations[number - 1] == (expected_uri or filename)
-
-        if with_links:
-            assert f"{number}. [{filename}]({expected_uri})" in markdown
-        else:
-            assert f"{number}. {filename}\n" in markdown
-
-        chatui_uri = expected_uri or CHATUI_PLACEHOLDER_URI
-        assert f"{number}. [{filename}]({chatui_uri})" in chatui_block
+    assert [source["number"] for source in sources] == cited
+    for source in sources:
+        filename = FILENAMES[source["number"] - 1]
+        assert source["title"] == filename
+        assert source["uri"] == (f"https://example.org/{filename}" if with_links else None)

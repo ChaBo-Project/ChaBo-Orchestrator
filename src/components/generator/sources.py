@@ -27,24 +27,21 @@ def parse_citations(response: str) -> List[int]:
 def extract_sources(
     processed_results: List[Dict[str, Any]],
     cited_numbers: List[int],
-    *,
-    preserve_positions: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Select cited sources, optionally including preceding entries to preserve positions."""
+    """
+    Select the cited sources in ascending citation order.
+
+    Each returned copy carries its citation number in `_citation_number` (its position in
+    the context the LLM saw), so later steps can label it with the same `[n]` the answer
+    uses. Numbers outside the retrieved results are skipped.
+    """
     valid_numbers = sorted({
         number for number in cited_numbers
         if 1 <= number <= len(processed_results)
     })
-    if not valid_numbers:
-        return []
-
-    if preserve_positions:
-        source_numbers = range(1, max(valid_numbers) + 1)
-    else:
-        source_numbers = valid_numbers
 
     cited_sources = []
-    for citation_num in source_numbers:
+    for citation_num in valid_numbers:
         source = processed_results[citation_num - 1].copy()
         source['_citation_number'] = citation_num
         cited_sources.append(source)
@@ -212,6 +209,9 @@ def create_sources_list(
         title_metadata_fields: List of metadata keys (e.g., ['document_type', 'decision_number'])
                                to use to build the source title.
         link_metadata_field: The single metadata key (e.g., 'document_url') to use for the source link (URL).
+
+    Each entry is `{"number", "uri", "title"}`; `number` is the source's citation number (the
+    `[n]` the answer uses for it), or None if the input carries none.
     """
     sources = []
     logger.info("creating cited sources list")
@@ -220,7 +220,7 @@ def create_sources_list(
     for result in cited_sources:
         # We access the original, full metadata dictionary
         all_meta = result.get('__all_metadata__', {})
-        citation_num = result.get('_citation_number', 'N/A')
+        citation_num = result.get('_citation_number')
         
         # 1. Build Title using configured fields
         title_parts = []
@@ -230,7 +230,9 @@ def create_sources_list(
                 title_parts.append(str(value))
         
         # Create a descriptive title
-        title = " - ".join(title_parts) if title_parts else f"Source {citation_num}"
+        title = " - ".join(title_parts) if title_parts else (
+            f"Source {citation_num}" if citation_num is not None else "Source"
+        )
 
         # 2. Extract Link using configured field. No link (or a bare '#') stays None —
         # the renderer decides how to present a source that has no URL.
@@ -239,6 +241,7 @@ def create_sources_list(
             link = None
 
         sources.append({
+            "number": citation_num,
             "uri": link,
             "title": title
         })
