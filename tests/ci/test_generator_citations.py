@@ -38,6 +38,7 @@ def test_generator_preserves_source_positions(
     generator.title_metadata_fields = ["filename"]
     generator.link_metadata_field = "url"
     generator.system_prompt = "Answer using the supplied documents."
+    generator.instance_user_instructions = ""
 
     async def fixed_answer(messages):
         return answer
