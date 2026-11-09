@@ -180,8 +180,9 @@ that number:
 - Which sources are listed is `[generator] SOURCES_DISPLAY`: `cited` (default, only the
   cited sources) or `all_retrieved` (every document given to the model). Any other value
   stops startup.
-- A citation range such as `[1-3]` counts as citing 1, 2 and 3. A citation that matches
-  no retrieved document is logged and gets no source.
+- Citations are read as `[n]` (also `[1][3]`) and grouped `[1, 3]`, matching the prompt's
+  citation format; ranges such as `[1-3]` are not read. A citation that matches no
+  retrieved document is logged and gets no source.
 
 **Guardrails** (both surfaces, both off by default — see `params.cfg`):
 - *Input guard* — classified pre-retrieval. On block the response is the fixed

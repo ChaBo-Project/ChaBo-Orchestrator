@@ -33,16 +33,9 @@ def test_text_without_citations_returns_an_empty_list():
     assert parse_citations("no citations here") == []
 
 
-def test_expands_citation_ranges():
-    assert parse_citations("See [1-3] and [5–6].") == [1, 2, 3, 5, 6]
-
-
-def test_expands_ranges_inside_grouped_citations():
-    assert parse_citations("See [1, 4-5].") == [1, 4, 5]
-
-
-def test_ignores_reversed_and_overly_wide_ranges():
-    assert parse_citations("Between [5-2] and [1900-2024].") == []
+def test_ranges_are_not_read_as_citations():
+    # The prompt never asks for ranges; "[1-5]" in ordinary text must not list sources.
+    assert parse_citations("Rated on a scale of [1-5].") == []
 
 
 def test_unmatched_citations_are_logged(caplog):

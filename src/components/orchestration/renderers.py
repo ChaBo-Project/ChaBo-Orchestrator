@@ -88,8 +88,8 @@ def citation_list(sources_collected) -> List[str]:
     """
     Flatten sources to the string list used by the non-standard `citations` field.
 
-    Perplexity-style `citations` is an array of strings and is what OpenWebUI's ad hoc
-    support reads. Clients resolve `[n]` to `citations[n - 1]`, so entry n-1 is the source
+    Perplexity-style `citations` is an array of strings, for clients that read it (OpenWebUI
+    does not: it shows the markdown Sources block). Clients resolve `[n]` to `citations[n - 1]`, so entry n-1 is the source
     numbered n (its `number`, falling back to its position); numbers that weren't cited
     are padded with "". Sources without a URI contribute their title.
     """

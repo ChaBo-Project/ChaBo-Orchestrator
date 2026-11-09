@@ -8,29 +8,22 @@ from langchain_core.documents import Document
 # ---------------------------------------------------------------------
 # Core Processing Functions
 # ---------------------------------------------------------------------
-# Longest citation range ("[1-3]") that is expanded; anything wider is not a citation
-# (e.g. a span of years) and is ignored.
-_MAX_CITATION_RANGE = 50
-
-
 def parse_citations(response: str) -> List[int]:
     """
-    Parse citation numbers from response text.
+    Parse citation numbers from response text: single `[1]` (also `[1][3]`) and grouped
+    `[1,2,3]` / `[1, 3]`. Returns sorted unique numbers.
 
-    Handles single `[1]`, grouped `[1,2,3]` / `[1, 3]` and ranged `[1-3]` / `[1–3]`
-    citations, including mixes such as `[1, 3-5]`. Returns sorted unique numbers.
+    Keep in step with the citation format the prompt asks for (BASE_PROMPT, "CITATION
+    FORMAT" in prompts.py). Ranges such as `[1-3]` are deliberately not read: the prompt
+    never asks for them, and bracketed ranges in ordinary text ("a scale of [1-5]") would
+    list sources that were never cited.
     """
-    citation_pattern = r'\[([\d,\s\-–]+)\]'
+    citation_pattern = r'\[([\d,\s]+)\]'
     matches = re.findall(citation_pattern, response)
 
     citation_numbers = set()
     for match in matches:
-        for part in match.split(','):
-            bounds = [int(n) for n in re.findall(r'\d+', part)]
-            if len(bounds) == 1:
-                citation_numbers.add(bounds[0])
-            elif len(bounds) == 2 and 0 <= bounds[1] - bounds[0] <= _MAX_CITATION_RANGE:
-                citation_numbers.update(range(bounds[0], bounds[1] + 1))
+        citation_numbers.update(int(num) for num in re.findall(r'\d+', match))
 
     citation_numbers = sorted(citation_numbers)
     logger.debug(f"Probable Citations found: {citation_numbers}")
