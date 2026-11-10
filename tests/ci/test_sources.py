@@ -5,13 +5,16 @@ Tests for the citation and source helpers.
 
 Covers:
 - finding citation numbers
-- picking out cited sources
+- picking out cited sources and keeping their citation numbers
 - normalising the various citation styles into plain bracket numbers
 """
+
+import pytest
 
 from components.generator.sources import (
     parse_citations,
     extract_sources,
+    create_sources_list,
     clean_citations,
 )
 
@@ -28,6 +31,17 @@ def test_removes_duplicates_and_sorts_the_numbers():
 
 def test_text_without_citations_returns_an_empty_list():
     assert parse_citations("no citations here") == []
+
+
+def test_ranges_are_not_read_as_citations():
+    # The prompt never asks for ranges; "[1-5]" in ordinary text must not list sources.
+    assert parse_citations("Rated on a scale of [1-5].") == []
+
+
+def test_unmatched_citations_are_logged(caplog):
+    with caplog.at_level("WARNING"):
+        extract_sources([{"title": "A"}], [1, 7])
+    assert "[7]" in caplog.text
 
 
 # --- extract_sources: keeping only the sources that were cited ---
@@ -56,34 +70,50 @@ def test_normalises_document_style_references_to_bracket_numbers():
 def test_collapses_doubled_brackets():
     assert clean_citations("text [[1]] here") == "text [1] here"
 
-def test_preserves_source_positions_when_citations_have_gaps():
+
+def test_gapped_citations_keep_their_own_numbers():
     results = [{"title": "A"}, {"title": "B"}, {"title": "C"}]
 
-    sources = extract_sources(results, [1, 3], preserve_positions=True)
+    sources = extract_sources(results, [3, 1])
 
-    assert [source["title"] for source in sources] == ["A", "B", "C"]
-    assert [source["_citation_number"] for source in sources] == [1, 2, 3]
+    assert [(s["_citation_number"], s["title"]) for s in sources] == [(1, "A"), (3, "C")]
     assert all("_citation_number" not in result for result in results)
 
 
-def test_preserves_source_positions_when_only_third_source_is_cited():
+def test_all_retrieved_mode_keeps_every_source_with_its_number():
     results = [{"title": "A"}, {"title": "B"}, {"title": "C"}]
 
-    sources = extract_sources(results, [3], preserve_positions=True)
+    sources = extract_sources(results, [3], mode="all_retrieved")
 
-    assert [source["title"] for source in sources] == ["A", "B", "C"]
-
-
-def test_preserving_positions_stops_at_highest_valid_citation():
-    results = [{"title": "A"}, {"title": "B"}, {"title": "C"}]
-
-    sources = extract_sources(results, [1, 99], preserve_positions=True)
-
-    assert [source["title"] for source in sources] == ["A"]
+    assert [(s["_citation_number"], s["title"]) for s in sources] == [(1, "A"), (2, "B"), (3, "C")]
 
 
-def test_preserving_positions_without_valid_citations_returns_no_sources():
-    results = [{"title": "A"}]
+def test_unknown_display_mode_is_rejected():
+    with pytest.raises(ValueError):
+        extract_sources([{"title": "A"}], [1], mode="everything")
 
-    assert extract_sources(results, [], preserve_positions=True) == []
-    assert extract_sources(results, [0, 99], preserve_positions=True) == []
+
+def test_only_valid_citation_numbers_are_kept():
+    results = [{"title": "A"}, {"title": "B"}]
+
+    assert [s["_citation_number"] for s in extract_sources(results, [0, 2, 99])] == [2]
+
+
+# --- create_sources_list: the per-source entries sent to every client ---
+
+def test_source_entries_carry_their_citation_number():
+    cited = [
+        {"__all_metadata__": {"filename": "a.pdf", "url": "https://example.org/a"}, "_citation_number": 2},
+        {"__all_metadata__": {"filename": "b.pdf"}, "_citation_number": 4},
+    ]
+
+    assert create_sources_list(cited, ["filename"], "url") == [
+        {"number": 2, "uri": "https://example.org/a", "title": "a.pdf"},
+        {"number": 4, "uri": None, "title": "b.pdf"},
+    ]
+
+
+def test_untitled_source_falls_back_to_its_number():
+    cited = [{"__all_metadata__": {}, "_citation_number": 3}]
+
+    assert create_sources_list(cited, ["filename"], "url")[0]["title"] == "Source 3"

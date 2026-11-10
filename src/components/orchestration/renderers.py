@@ -58,7 +58,12 @@ def format_filters_footnote(filters: Dict[str, Any], narrowed: bool) -> str:
 
 def format_sources_markdown(sources_collected, placeholder_uri: Optional[str] = None) -> str:
     """
-    Render collected sources as a markdown list.
+    Render collected sources as a markdown list, one `- [n] [title](uri)` line per source.
+
+    `n` is the source's citation number (`number`, the `[n]` the answer uses for it), so the
+    list stays aligned with the answer when the cited numbers have gaps. It is a bullet list
+    with explicit numbers rather than an ordered `1.` list because markdown renumbers ordered
+    lists from their first item. Sources without a `number` fall back to their position.
 
     `create_sources_list()` reports `uri=None` for a source with no link, and what that looks
     like on the wire is the renderer's call: pass `placeholder_uri` for a frontend that only
@@ -66,13 +71,16 @@ def format_sources_markdown(sources_collected, placeholder_uri: Optional[str] = 
     CHATUI_PLACEHOLDER_URI), leave it unset to print an unlinked title.
     """
     sources_text = "\n\n**Sources:**\n"
-    for i, source in enumerate(sources_collected, 1):
+    for position, source in enumerate(sources_collected, 1):
         if isinstance(source, dict):
+            number = source.get("number")
+            number = position if number is None else number
             title = source.get("title", "Unknown")
             uri = source.get("uri") or placeholder_uri
-            sources_text += f"{i}. [{title}]({uri})\n" if uri else f"{i}. {title}\n"
+            entry = f"[{title}]({uri})" if uri else title
         else:
-            sources_text += f"{i}. {str(source)}\n"
+            number, entry = position, str(source)
+        sources_text += f"- [{number}] {entry}\n"
     return sources_text
 
 
@@ -80,17 +88,22 @@ def citation_list(sources_collected) -> List[str]:
     """
     Flatten sources to the string list used by the non-standard `citations` field.
 
-    Perplexity-style `citations` is an array of strings and is what OpenWebUI's ad hoc
-    support reads. Sources without a URI contribute their title so the array stays aligned
-    positionally with the `[N]` markers in the answer.
+    Perplexity-style `citations` is an array of strings, for clients that read it (OpenWebUI
+    does not: it shows the markdown Sources block). Clients resolve `[n]` to `citations[n - 1]`, so entry n-1 is the source
+    numbered n (its `number`, falling back to its position); numbers that weren't cited
+    are padded with "". Sources without a URI contribute their title.
     """
-    citations = []
-    for source in sources_collected or []:
+    by_number: Dict[int, str] = {}
+    for position, source in enumerate(sources_collected or [], 1):
         if isinstance(source, dict):
-            citations.append(source.get("uri") or source.get("title", "Unknown"))
+            number = source.get("number")
+            number = position if number is None else number
+            by_number[number] = source.get("uri") or source.get("title", "Unknown")
         else:
-            citations.append(str(source))
-    return citations
+            by_number[position] = str(source)
+    if not by_number:
+        return []
+    return [by_number.get(n, "") for n in range(1, max(by_number) + 1)]
 
 
 class BaseRenderer:

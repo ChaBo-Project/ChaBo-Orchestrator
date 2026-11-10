@@ -12,7 +12,7 @@ from ..llm import LLMClient, build_llm_client
 from .prompts import build_system_prompt, build_messages
 from .sources import (
     process_context, parse_citations, 
-    extract_sources, create_sources_list, clean_citations
+    extract_sources, create_sources_list, clean_citations, SOURCES_DISPLAY_MODES
 )
 
 
@@ -27,11 +27,12 @@ class Generator:
     CONFIG_MAP = {
         "context_metadata_fields":  ("generator", "CONTEXT_META_FIELDS", "GENERATOR_CONTEXT_META_FIELDS", "source,page"),
         "title_metadata_fields":    ("generator", "TITLE_META_FIELDS", "GENERATOR_TITLE_META_FIELDS", "source,document_id"),
-        "link_metadata_field":      ("generator", "LINK_META_FIELD", "GENERATOR_LINK_META_FIELD", "url")
+        "link_metadata_field":      ("generator", "LINK_META_FIELD", "GENERATOR_LINK_META_FIELD", "url"),
+        "sources_display":          ("generator", "SOURCES_DISPLAY", "GENERATOR_SOURCES_DISPLAY", "cited"),
     }
 
     def __init__(self, config_path: str = "params.cfg", llm_client: Optional[LLMClient] = None,
-                 instance_guidelines: str = "", **kwargs):
+                 instance_guidelines: str = "", instance_user_instructions: str = "", **kwargs):
         logger.info("Initializing Generator component with config precedence...")
 
         # 2. Load Configuration
@@ -63,6 +64,14 @@ class Generator:
         self.context_metadata_fields = resolved_config['context_metadata_fields']
         self.title_metadata_fields = resolved_config['title_metadata_fields']
         self.link_metadata_field = resolved_config['link_metadata_field']
+        # Which sources are listed under the answer; fail fast on anything unknown (a
+        # trailing "# comment" in params.cfg would otherwise silently become the value).
+        self.sources_display = str(resolved_config['sources_display']).strip().lower()
+        if self.sources_display not in SOURCES_DISPLAY_MODES:
+            raise ValueError(
+                f"[generator] SOURCES_DISPLAY = {resolved_config['sources_display']!r} is not "
+                f"one of {', '.join(SOURCES_DISPLAY_MODES)}"
+            )
 
         # 4. Inference layer
         # Use LLMClient or build the default generation client.
@@ -70,6 +79,8 @@ class Generator:
 
         # 5. System prompt: FRAMEWORK_VALUES + BASE_PROMPT + optional instance_guidelines.
         self.system_prompt = build_system_prompt(instance_guidelines)
+        # 6. Optional per-deployment instructions for the user message (see build_messages).
+        self.instance_user_instructions = instance_user_instructions
 
         logger.info(f"Generator initialized with provider: {self.llm_client.provider}, model: {self.llm_client.model}")
         logger.debug(f"Metadata Config: Context={self.context_metadata_fields}, Title={self.title_metadata_fields}")
@@ -160,7 +171,8 @@ class Generator:
                metadata_fields_to_include=self.context_metadata_fields)
 
             # 2. Build Messages (with system prompt and optional conversation history)
-            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context, query_interpretation)
+            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context,
+                                      query_interpretation, self.instance_user_instructions)
 
 
 
@@ -171,9 +183,7 @@ class Generator:
                 result = {"answer": answer}
                 if processed_results:
                     cited_numbers = parse_citations(answer)
-                    cited_sources = extract_sources(
-                        processed_results, cited_numbers, preserve_positions=True
-                    )
+                    cited_sources = extract_sources(processed_results, cited_numbers, self.sources_display)
                     result["sources"] = create_sources_list(cited_sources, 
                                         title_metadata_fields=self.title_metadata_fields,
                                         link_metadata_field=self.link_metadata_field)
@@ -206,7 +216,8 @@ class Generator:
                             metadata_fields_to_include =self.context_metadata_fields)
 
             # 2. Build Messages (with system prompt and optional conversation history)
-            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context, query_interpretation)
+            messages = build_messages(self.system_prompt, query, formatted_context, conversation_context,
+                                      query_interpretation, self.instance_user_instructions)
 
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""
@@ -230,9 +241,7 @@ class Generator:
                 # Add sources if available
                 if processed_results:
                     cited_numbers = parse_citations(cleaned_response)
-                    cited_sources = extract_sources(
-                        processed_results, cited_numbers, preserve_positions=True
-                    )
+                    cited_sources = extract_sources(processed_results, cited_numbers, self.sources_display)
                     sources = create_sources_list(cited_sources,
                                 title_metadata_fields=self.title_metadata_fields,
                                 link_metadata_field=self.link_metadata_field)

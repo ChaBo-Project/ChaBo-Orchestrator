@@ -9,42 +9,64 @@ from langchain_core.documents import Document
 # Core Processing Functions
 # ---------------------------------------------------------------------
 def parse_citations(response: str) -> List[int]:
-    """Parse citation numbers from response text, handling both [1] and [1,2,3] formats"""
-    # Match both single citations [1] and comma-separated citations [1,2,3,4,5]
+    """
+    Parse citation numbers from response text: single `[1]` (also `[1][3]`) and grouped
+    `[1,2,3]` / `[1, 3]`. Returns sorted unique numbers.
+
+    Keep in step with the citation format the prompt asks for (BASE_PROMPT, "CITATION
+    FORMAT" in prompts.py). Ranges such as `[1-3]` are deliberately not read: the prompt
+    never asks for them, and bracketed ranges in ordinary text ("a scale of [1-5]") would
+    list sources that were never cited.
+    """
     citation_pattern = r'\[([\d,\s]+)\]'
     matches = re.findall(citation_pattern, response)
 
     citation_numbers = set()
     for match in matches:
-        # Split by comma and extract all numbers
-        numbers = re.findall(r'\d+', match)
-        citation_numbers.update(int(num) for num in numbers)
+        citation_numbers.update(int(num) for num in re.findall(r'\d+', match))
 
-    citation_numbers = sorted(list(citation_numbers))
+    citation_numbers = sorted(citation_numbers)
     logger.debug(f"Probable Citations found: {citation_numbers}")
     return citation_numbers
+
+# [generator] SOURCES_DISPLAY values: which sources are listed under the answer.
+SOURCES_DISPLAY_MODES = ("cited", "all_retrieved")
+
 
 def extract_sources(
     processed_results: List[Dict[str, Any]],
     cited_numbers: List[int],
-    *,
-    preserve_positions: bool = False,
+    mode: str = "cited",
 ) -> List[Dict[str, Any]]:
-    """Select cited sources, optionally including preceding entries to preserve positions."""
+    """
+    Select the sources to list, in ascending citation order.
+
+    `mode` (see SOURCES_DISPLAY_MODES): "cited" keeps only the sources the answer cites;
+    "all_retrieved" keeps every retrieved document, cited or not.
+
+    Each returned copy carries its citation number in `_citation_number` (its position in
+    the context the LLM saw), so later steps can label it with the same `[n]` the answer
+    uses. Cited numbers outside the retrieved results are skipped.
+    """
+    if mode not in SOURCES_DISPLAY_MODES:
+        raise ValueError(f"Unknown sources display mode {mode!r}; expected one of {SOURCES_DISPLAY_MODES}")
+
     valid_numbers = sorted({
         number for number in cited_numbers
         if 1 <= number <= len(processed_results)
     })
-    if not valid_numbers:
-        return []
+    unmatched = sorted(set(cited_numbers) - set(valid_numbers))
+    if unmatched:
+        logger.warning(
+            f"Answer cites {unmatched}, but only {len(processed_results)} documents were "
+            f"retrieved; those citations have no source."
+        )
 
-    if preserve_positions:
-        source_numbers = range(1, max(valid_numbers) + 1)
-    else:
-        source_numbers = valid_numbers
+    if mode == "all_retrieved":
+        valid_numbers = list(range(1, len(processed_results) + 1))
 
     cited_sources = []
-    for citation_num in source_numbers:
+    for citation_num in valid_numbers:
         source = processed_results[citation_num - 1].copy()
         source['_citation_number'] = citation_num
         cited_sources.append(source)
@@ -212,6 +234,9 @@ def create_sources_list(
         title_metadata_fields: List of metadata keys (e.g., ['document_type', 'decision_number'])
                                to use to build the source title.
         link_metadata_field: The single metadata key (e.g., 'document_url') to use for the source link (URL).
+
+    Each entry is `{"number", "uri", "title"}`; `number` is the source's citation number (the
+    `[n]` the answer uses for it), or None if the input carries none.
     """
     sources = []
     logger.info("creating cited sources list")
@@ -220,7 +245,7 @@ def create_sources_list(
     for result in cited_sources:
         # We access the original, full metadata dictionary
         all_meta = result.get('__all_metadata__', {})
-        citation_num = result.get('_citation_number', 'N/A')
+        citation_num = result.get('_citation_number')
         
         # 1. Build Title using configured fields
         title_parts = []
@@ -230,7 +255,9 @@ def create_sources_list(
                 title_parts.append(str(value))
         
         # Create a descriptive title
-        title = " - ".join(title_parts) if title_parts else f"Source {citation_num}"
+        title = " - ".join(title_parts) if title_parts else (
+            f"Source {citation_num}" if citation_num is not None else "Source"
+        )
 
         # 2. Extract Link using configured field. No link (or a bare '#') stays None —
         # the renderer decides how to present a source that has no URL.
@@ -239,6 +266,7 @@ def create_sources_list(
             link = None
 
         sources.append({
+            "number": citation_num,
             "uri": link,
             "title": title
         })
