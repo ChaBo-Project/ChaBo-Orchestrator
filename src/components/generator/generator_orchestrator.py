@@ -12,7 +12,7 @@ from ..llm import LLMClient, build_llm_client
 from .prompts import build_system_prompt, build_messages
 from .sources import (
     process_context, parse_citations, 
-    extract_sources, create_sources_list, clean_citations
+    extract_sources, create_sources_list, clean_citations, SOURCES_DISPLAY_MODES
 )
 
 
@@ -27,7 +27,8 @@ class Generator:
     CONFIG_MAP = {
         "context_metadata_fields":  ("generator", "CONTEXT_META_FIELDS", "GENERATOR_CONTEXT_META_FIELDS", "source,page"),
         "title_metadata_fields":    ("generator", "TITLE_META_FIELDS", "GENERATOR_TITLE_META_FIELDS", "source,document_id"),
-        "link_metadata_field":      ("generator", "LINK_META_FIELD", "GENERATOR_LINK_META_FIELD", "url")
+        "link_metadata_field":      ("generator", "LINK_META_FIELD", "GENERATOR_LINK_META_FIELD", "url"),
+        "sources_display":          ("generator", "SOURCES_DISPLAY", "GENERATOR_SOURCES_DISPLAY", "cited"),
     }
 
     def __init__(self, config_path: str = "params.cfg", llm_client: Optional[LLMClient] = None,
@@ -63,6 +64,14 @@ class Generator:
         self.context_metadata_fields = resolved_config['context_metadata_fields']
         self.title_metadata_fields = resolved_config['title_metadata_fields']
         self.link_metadata_field = resolved_config['link_metadata_field']
+        # Which sources are listed under the answer; fail fast on anything unknown (a
+        # trailing "# comment" in params.cfg would otherwise silently become the value).
+        self.sources_display = str(resolved_config['sources_display']).strip().lower()
+        if self.sources_display not in SOURCES_DISPLAY_MODES:
+            raise ValueError(
+                f"[generator] SOURCES_DISPLAY = {resolved_config['sources_display']!r} is not "
+                f"one of {', '.join(SOURCES_DISPLAY_MODES)}"
+            )
 
         # 4. Inference layer
         # Use LLMClient or build the default generation client.
@@ -174,7 +183,7 @@ class Generator:
                 result = {"answer": answer}
                 if processed_results:
                     cited_numbers = parse_citations(answer)
-                    cited_sources = extract_sources(processed_results, cited_numbers)
+                    cited_sources = extract_sources(processed_results, cited_numbers, self.sources_display)
                     result["sources"] = create_sources_list(cited_sources, 
                                         title_metadata_fields=self.title_metadata_fields,
                                         link_metadata_field=self.link_metadata_field)
@@ -232,7 +241,7 @@ class Generator:
                 # Add sources if available
                 if processed_results:
                     cited_numbers = parse_citations(cleaned_response)
-                    cited_sources = extract_sources(processed_results, cited_numbers)
+                    cited_sources = extract_sources(processed_results, cited_numbers, self.sources_display)
                     sources = create_sources_list(cited_sources,
                                 title_metadata_fields=self.title_metadata_fields,
                                 link_metadata_field=self.link_metadata_field)

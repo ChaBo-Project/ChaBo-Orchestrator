@@ -47,6 +47,8 @@ SUSTAINABLE USE OF RESOURCES:
 
 
 # Generic RAG instructions — domain-agnostic, safe to share across every deployment.
+# The citation format below ("CITATION FORMAT") is what components.generator.sources
+# .parse_citations() reads; change both together.
 BASE_PROMPT = """You are an expert AI Assistant designed to provide accurate, helpful responses based on retrieved information.
 You are given a question and extracted passages from documents.
 Provide a clear and structured answer based on the passages/context provided and the guidelines. Be precise and avoid including irrelevant information.

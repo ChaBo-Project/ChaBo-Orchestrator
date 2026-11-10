@@ -238,6 +238,8 @@ Pass API keys as environment variables at runtime:
 
 **Reasoning off / chat-template options (optional):** any task can send extra chat-template variables as a JSON object: `[generator] CHAT_TEMPLATE_KWARGS` and `llm_chat_template_kwargs` in the other four sections (env: `GENERATOR_CHAT_TEMPLATE_KWARGS`, `FILTER_EXTRACTION_LLM_CHAT_TEMPLATE_KWARGS`, …). Example: `{"enable_thinking": false}` turns off reasoning on Qwen3-style models, cutting time to first token from ~15 s to ~1 s; reasoning tokens are invisible in the answer but still billed. Supported for `huggingface`, `huggingface_router`, `openai` and `azure` (OpenAI-compatible servers such as the HF router, vLLM or SGLang); other providers fail at startup if it is set. Unset = requests unchanged. Which keys a model accepts depends on its chat template.
 
+**Source list (optional):** `[generator] SOURCES_DISPLAY` (env: `GENERATOR_SOURCES_DISPLAY`) chooses which sources are listed under the answer: `cited` (default, only the sources the answer cites) or `all_retrieved` (every document given to the model). Each source is labelled with the `[n]` the answer uses for it, gaps included (`- [2] …`, `- [4] …`). `all_retrieved` needs a ChaBo-ChatUI release that reads the number on each source line; older releases label the chips wrongly. Format details: [`docs/api-spec.md`](docs/api-spec.md), "Sources and citation numbers".
+
 #### Build and Run
 
 ```bash

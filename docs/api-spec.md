@@ -68,12 +68,13 @@ code-owned, `generator/prompts.py`).
   "created": 1756252800,
   "model": "chabo",
   "choices": [{"index":0,"message":{"role":"assistant","content":"…markdown…"},"finish_reason":"stop"}],
-  "citations": ["https://…", "Document title"]
+  "citations": ["", "https://…", "", "Document title"]
 }
 ```
 
 `content` is the full markdown body: answer, then an optional filters footnote
-(`---\n*🔍 Searched within: …*`), then a `**Sources:**` numbered list.
+(`---\n*🔍 Searched within: …*`), then a `**Sources:**` list with one `- [n] [title](uri)`
+line per source (see **Sources and citation numbers** in section 4).
 `citations` is present only when `[api] openai_citations = true` and sources exist.
 
 **Response — streaming** (`stream: true`), `200 text/event-stream`. Frames are
@@ -84,7 +85,7 @@ code-owned, `generator/prompts.py`).
 | 1 | `{"role":"assistant","content":""}` (prelude) |
 | 2..n | `{"content":"<token>"}` |
 | — | `{"content":"\n\n---\n*🔍 Searched within: …*"}` (only if filters applied) |
-| — | `{"content":"\n\n**Sources:**\n1. …"}` — this frame may carry a top-level `citations` array |
+| — | `{"content":"\n\n**Sources:**\n- [n] …"}` — this frame may carry a top-level `citations` array |
 | last | `{}` with `"finish_reason":"stop"`, then `[DONE]` |
 
 Errors after headers are sent arrive as a content frame (`\n\nError: …`) followed by the
@@ -166,6 +167,22 @@ renders citations whose link carries an accepted scheme).
 ---
 
 ## 4. Cross-cutting behaviour
+
+**Sources and citation numbers** (both surfaces). The LLM cites retrieved documents as `[n]`,
+where `n` is the document's position in the context it was given. Every source output keeps
+that number:
+
+- Markdown: one `- [n] [title](uri)` line per source (`- [n] title` when there is no link),
+  in ascending order. It is a bullet list with explicit numbers because markdown renumbers
+  ordered lists, so gaps such as `[2]`, `[4]` survive rendering.
+- `citations`: positional, `citations[n - 1]` is source `n` (its URI, else its title);
+  numbers below the highest that aren't listed are padded with `""`.
+- Which sources are listed is `[generator] SOURCES_DISPLAY`: `cited` (default, only the
+  cited sources) or `all_retrieved` (every document given to the model). Any other value
+  stops startup.
+- Citations are read as `[n]` (also `[1][3]`) and grouped `[1, 3]`, matching the prompt's
+  citation format; ranges such as `[1-3]` are not read. A citation that matches no
+  retrieved document is logged and gets no source.
 
 **Guardrails** (both surfaces, both off by default — see `params.cfg`):
 - *Input guard* — classified pre-retrieval. On block the response is the fixed

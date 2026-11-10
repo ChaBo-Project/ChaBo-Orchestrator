@@ -41,14 +41,14 @@ def _frames(raw: str):
 
 def test_source_with_a_link_is_rendered_as_a_markdown_link():
     text = format_sources_markdown([{"title": "Report", "uri": "https://example.org/a"}])
-    assert "1. [Report](https://example.org/a)" in text
+    assert "- [1] [Report](https://example.org/a)" in text
 
 
 def test_source_without_a_link_is_rendered_as_plain_text_by_default():
     # The core no longer invents a placeholder (create_sources_list reports uri=None); a
     # renderer that wants one asks for it — see the ChatUI cases below.
     text = format_sources_markdown([{"title": "Report", "uri": None}])
-    assert "1. Report" in text
+    assert "- [1] Report" in text
     assert "doc://" not in text
     assert "(" not in text
 
@@ -57,14 +57,14 @@ def test_a_placeholder_uri_is_substituted_for_a_source_with_no_link():
     # Our Chabo-ChatUI only renders a citation whose URL matches doc:// | http:// | https://,
     # so on that path an absent link must still produce a scheme-carrying markdown link.
     text = format_sources_markdown([{"title": "Report", "uri": None}], CHATUI_PLACEHOLDER_URI)
-    assert "1. [Report](doc://#)" in text
+    assert "- [1] [Report](doc://#)" in text
 
 
 def test_a_placeholder_never_overrides_a_real_link():
     text = format_sources_markdown(
         [{"title": "Report", "uri": "https://example.org/a"}], CHATUI_PLACEHOLDER_URI
     )
-    assert "1. [Report](https://example.org/a)" in text
+    assert "- [1] [Report](https://example.org/a)" in text
     assert "doc://" not in text
 
 
@@ -96,13 +96,42 @@ def test_the_chatui_source_block_parses_under_the_forks_own_regex():
     ]
 
 
-def test_sources_are_numbered_in_citation_order():
+def test_each_source_line_carries_its_own_citation_number():
+    text = format_sources_markdown([
+        {"number": 2, "title": "A", "uri": None},
+        {"number": 5, "title": "B", "uri": "https://example.org/b"},
+    ])
+    assert "- [2] A\n" in text
+    assert "- [5] [B](https://example.org/b)\n" in text
+
+
+def test_source_lines_are_not_an_ordered_list():
+    # A markdown ordered list renumbers from its first item ("2." then "5." shows 2, 3), so
+    # the block must never contain one.
+    text = format_sources_markdown([{"number": 2, "title": "A", "uri": None}])
+    assert not re.search(r"(?m)^\s*\d+\.\s", text)
+
+
+def test_sources_without_a_number_fall_back_to_their_position():
     text = format_sources_markdown([{"title": "A", "uri": None}, {"title": "B", "uri": None}])
-    assert "1. A" in text and "2. B" in text
+    assert "- [1] A" in text and "- [2] B" in text
 
 
 def test_citation_list_falls_back_to_the_title_when_there_is_no_uri():
     assert citation_list([{"title": "A", "uri": None}, {"title": "B", "uri": "u"}]) == ["A", "u"]
+
+
+def test_citation_list_puts_each_source_at_its_citation_number():
+    # [2] and [4] cited: clients read citations[n - 1], so the gaps are padded.
+    sources = [
+        {"number": 2, "title": "A", "uri": None},
+        {"number": 4, "title": "B", "uri": "https://example.org/b"},
+    ]
+    assert citation_list(sources) == ["", "A", "", "https://example.org/b"]
+
+
+def test_citation_list_of_no_sources_is_empty():
+    assert citation_list([]) == []
 
 
 # --- filters footnote ---
