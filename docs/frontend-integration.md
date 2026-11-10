@@ -119,9 +119,15 @@ Three ChatUI-shaped workarounds can then be deprecated:
 
 **Source numbers in ChatUI.** ChatUI releases up to 0.9.3 ignore the `[n]` on each source line
 and label chip i with the i-th cited number found in the answer. That is only correct while the
-list holds exactly the cited sources, so `[generator] SOURCES_DISPLAY = all_retrieved` needs a
-ChatUI release that reads the number from each source line.
+list holds exactly the cited sources and every citation is a single `[n]` marker. Two cases
+therefore need a ChatUI release that reads the number from each source line:
 
+- `[generator] SOURCES_DISPLAY = all_retrieved`, and
+- answers with grouped citations such as `[1, 3]`, even in the default `cited` mode: older
+  ChatUI labels those sources `[1]` and `[2]`.
+
+Single `[n]` and adjacent `[1][3]` citations are labelled correctly by any ChatUI release, so
+for answers that avoid grouped citations the two releases can still be deployed independently.
 
 ## Adding another frontend
 
