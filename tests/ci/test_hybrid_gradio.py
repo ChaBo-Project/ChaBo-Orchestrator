@@ -282,3 +282,8 @@ def test_a_running_check_is_not_repeated(monkeypatch):
     with retriever._hybrid_check_lock:  # another check in progress
         retriever._try_hybrid_check()
     assert space.client.calls == []
+
+
+def test_gradio_url_without_scheme_fails_at_startup(monkeypatch):
+    with pytest.raises(ValueError, match="needs a scheme"):
+        _retriever(monkeypatch, FakeGradioClient(), qdrant_url="qdrant.example")

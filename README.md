@@ -96,6 +96,10 @@ MAX_TURNS = 3
 MAX_CHARS = 8000
 ```
 
+> In `gradio` mode, `[qdrant] url` must include `https://`. A bare hostname is read as a Hugging Face Space ID and fails with a confusing 404.
+>
+> A `#` that follows a space starts a comment, so `key = value  # note` is read as `value`.
+
 Hosted chat can opt into `PROVIDER = huggingface_router` using `HF_TOKEN`.
 This uses `https://router.huggingface.co/v1` and avoids the installed Hub SDK's
 provider registry. Set `INFERENCE_PROVIDER = deepinfra` to select that provider,
