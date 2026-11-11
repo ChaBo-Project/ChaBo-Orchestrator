@@ -229,6 +229,12 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         if mode not in ['native', 'gradio']:
             logger.error(f"Unsupported qdrant_mode: {mode}. Must be 'native' or 'gradio'.")
             raise ValueError(f"Unsupported qdrant_mode: {mode}. Must be 'native' or 'gradio'.")
+        if mode == "gradio" and "://" not in instance.qdrant_url:
+            raise ValueError(
+                f"[qdrant] url = {instance.qdrant_url!r} needs a scheme in gradio mode, "
+                f"e.g. https://{instance.qdrant_url}. Without it, gradio_client treats the "
+                f"value as a Hugging Face Space ID and fails with a 404."
+            )
 
         if instance.hybrid_enabled:
             if instance.dense_weight < 0 or instance.sparse_weight < 0:
