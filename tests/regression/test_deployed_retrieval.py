@@ -47,6 +47,16 @@ class DeployedRetrievalTests(unittest.TestCase):
             "Content-Type": "application/json",
         }
 
+        # Newer Qdrant wrappers have more inputs (hybrid options). Raw HTTP
+        # calls must send every input, so pad the optional ones with None.
+        info_request = Request(
+            base_url + "/gradio_api/info",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urlopen(info_request, timeout=60) as response:
+            info = json.load(response)
+        input_count = len(info["named_endpoints"]["/query_points"]["parameters"])
+
         for document in documents:
             metadata = document["payload"]["metadata"]
             with self.subTest(document_id=metadata["document_id"]):
@@ -54,14 +64,10 @@ class DeployedRetrievalTests(unittest.TestCase):
                 request = Request(
                     base_url + "/gradio_api/call/query_points",
                     data=json.dumps({
-                        "data": [
-                            json.dumps(document["vector"]),
-                            collection,
-                            1,
-                            "",
-                            "",
-                            False,
-                        ]
+                        "data": (
+                            [json.dumps(document["vector"]), collection, 1, "", "", False]
+                            + [None] * (input_count - 6)
+                        )
                     }).encode("utf-8"),
                     headers=headers,
                     method="POST",
