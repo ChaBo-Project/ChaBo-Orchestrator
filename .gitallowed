@@ -1,0 +1,11 @@
+# Regexes here mark git-secrets false positives as allowed.
+# Each line matched against a flagged line; if it also matches here, it's let through.
+# Keep patterns narrow — only exempt the specific safe shape, not api_key checks in general.
+# No literal spaces outside character classes (see CLAUDE.md's git-secrets known limitation).
+
+# Dict/method lookups of a key literally named "api_key" (e.g. auth_config["api_key"],
+# get_auth_for_generator(...)["api_key"], auth_config.get("api_key")) are references to an
+# already-resolved auth dict, not a hardcoded secret value. Covers existing uses in
+# src/components/llm/llm_client.py and src/components/utils.py, plus tests/eval/ragas/judge.py.
+\["api_key"\]
+\.get\("api_key"\)
