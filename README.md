@@ -2,6 +2,27 @@
 
 A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, LangChain, and LangGraph. ChaBo orchestrates embedding, vector search, reranking, and LLM generation to answer queries using retrieved context. It also supports query rewriting (including cross-lingual), LLM-based metadata filtering, and optional input/output safety guardrails.
 
+## Optional trusted managed context
+
+An operator may set a dedicated 64-hex `MANAGED_CONTEXT_KEY` to register the private
+`POST /internal/v1/managed-answer` adapter. Without it the route does not exist.
+Expose it only to the trusted backend coordinator, never directly to browsers.
+Requests require `Authorization: Bearer <MANAGED_CONTEXT_KEY>` and bounded JSON:
+`messages` (up to nine user/assistant messages, last role user) and `documents`
+(up to five `{id, ordinal, title, content}` objects). `id` is a 32-hex artifact ID;
+the body is limited to 64 KiB, document text to 24 KiB and history to 24 KiB.
+Unknown fields, system prompts and invalid credentials are rejected.
+
+The backend must authorize the user/bot/collection and enforce document lifecycle
+before supplying context. The adapter passes documents into the existing graph
+as retrieval results, preserving configured generation and output guards. Empty
+results remain empty and never trigger default-corpus retrieval. It returns
+`{"answer":"..."}`; provider failures return a safe 503 rather than answer text.
+It is initially non-streaming. All public LangServe/OpenAI routes, schemas and
+default retrieval remain unchanged. Central identity, history and logging belong
+to the backend coordinator, not this adapter. This feature is independent of
+provider PR #66; HF router support requires that separately reviewed provider.
+
 ## Architecture
 
 ```mermaid
