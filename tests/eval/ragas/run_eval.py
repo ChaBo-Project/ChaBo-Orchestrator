@@ -72,6 +72,10 @@ def _gather_secrets() -> Dict[str, str]:
     return {name: os.environ[name] for name in SECRET_ENV_VARS if os.environ.get(name)}
 
 
+class EvalAuthError(RuntimeError):
+    """The orchestrator rejected the eval token (or has no EVAL_API_KEY set at all)."""
+
+
 async def _call_eval_query(
     client: httpx.AsyncClient, endpoint: str, token: str, question: str
 ) -> Dict[str, Any]:
@@ -82,6 +86,14 @@ async def _call_eval_query(
         headers={"X-Eval-Token": token},
         timeout=120.0,
     )
+    # /eval-query answers 404 (not 401) on a bad token, so both mean "auth problem".
+    # EvalAuthError is not an httpx.HTTPError, so run_case's retry does not swallow it.
+    if response.status_code in (401, 404):
+        raise EvalAuthError(
+            f"{endpoint} rejected the eval token (HTTP {response.status_code}). "
+            "Check that --eval-token / EVAL_API_KEY matches the EVAL_API_KEY secret "
+            "set on that instance, and that the instance runs a version that has /eval-query."
+        )
     response.raise_for_status()
     return response.json()
 
@@ -143,7 +155,11 @@ async def _score_and_record(
         cases = cases[: args.limit]
     print(f"Loaded {len(cases)} case(s) from {args.testset}.")
 
-    results = await run_testset(endpoint, token, cases)
+    try:
+        results = await run_testset(endpoint, token, cases)
+    except EvalAuthError as exc:
+        print(f"Aborting: {exc}")
+        return 1
 
     config = getconfig("params.cfg")
     try:
