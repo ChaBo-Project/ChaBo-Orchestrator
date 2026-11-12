@@ -8,6 +8,7 @@ Bound to 127.0.0.1 only: never reachable beyond the machine running eval, regard
 backing services (Qdrant, embedding, LLM) it's configured to call out to.
 """
 import asyncio
+import os
 import subprocess
 import time
 from contextlib import asynccontextmanager
@@ -25,8 +26,8 @@ class ContainerError(RuntimeError):
     """Raised when docker pull/run/health-check fails."""
 
 
-def _run(cmd):
-    result = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd, env=None):
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         raise ContainerError(f"{' '.join(cmd)} failed:\n{result.stdout}\n{result.stderr}")
     return result
@@ -38,8 +39,8 @@ def start_container(chabo_tag: str, rendered_config_dir: Path, host_port: int, s
     _run(["docker", "pull", image])
 
     env_args = ["-e", "INSTANCE_CONFIG_DIR=/app/instance_config"]
-    for key, value in secrets.items():
-        env_args += ["-e", f"{key}={value}"]
+    for key in secrets:
+        env_args += ["-e", key]  # no "=value": docker copies it from the env passed below
 
     _run([
         "docker", "run", "-d", "--rm",
@@ -48,7 +49,7 @@ def start_container(chabo_tag: str, rendered_config_dir: Path, host_port: int, s
         "-v", f"{rendered_config_dir}:/app/instance_config:ro",
         *env_args,
         image,
-    ])
+    ], env={**os.environ, **secrets})
 
 
 def stop_container() -> None:
