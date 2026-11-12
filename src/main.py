@@ -2,6 +2,7 @@
 ChaBo RAG Orchestrator - Production Entry Point
 """
 import os
+import secrets
 import logging
 from components.logging_setup import (
     configure_logging,
@@ -296,7 +297,9 @@ async def eval_query(request: EvalQueryRequest, x_eval_token: Optional[str] = He
     place raw_documents and internal flags like retrieval_success/guard_blocked live;
     production's process_query_streaming never needs them, so it only requests "custom").
     """
-    if not EVAL_API_KEY or x_eval_token != EVAL_API_KEY:
+    if not EVAL_API_KEY or not x_eval_token or not secrets.compare_digest(
+        x_eval_token.encode(), EVAL_API_KEY.encode()
+    ):
         raise HTTPException(status_code=404)
 
     # Mirrors process_query_streaming's initial_state block (streaming.py) - keep both in
