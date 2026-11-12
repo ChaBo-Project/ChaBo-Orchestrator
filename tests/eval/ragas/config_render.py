@@ -93,10 +93,10 @@ def apply_override(rendered_config_path: Path, override_path: Optional[Path]) ->
     if override_path is None:
         return {}
 
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(interpolation=None)
     config.read(rendered_config_path)
 
-    override = configparser.ConfigParser()
+    override = configparser.ConfigParser(interpolation=None)
     override.read(override_path)
 
     swept: Dict[str, Dict[str, str]] = {}
