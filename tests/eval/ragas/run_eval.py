@@ -172,10 +172,12 @@ async def _score_and_record(
     print("Scoring with RAGAS...")
     scored = await score_testset(metrics, results)
 
-    os.makedirs(args.out_dir, exist_ok=True)
+    os.makedirs(args.run_dir, exist_ok=True)
     summary = summarize(scored)
-    write_cases_jsonl(scored, os.path.join(args.out_dir, "cases.jsonl"))
-    write_cases_csv(scored, os.path.join(args.out_dir, "cases.csv"))
+    write_cases_jsonl(scored, os.path.join(args.run_dir, "cases.jsonl"))
+    write_cases_csv(scored, os.path.join(args.run_dir, "cases.csv"))
+    with open(os.path.join(args.run_dir, "summary.json"), "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
 
     run_context = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -185,17 +187,18 @@ async def _score_and_record(
         "testset_hash": test_set_hash(args.testset),
         "judge_model": config.get("ragas", "JUDGE_MODEL", fallback=None),
         "num_cases": len(scored),
+        "run_dir": os.path.basename(args.run_dir),
         **extra_run_context,
     }
     manifest = build_manifest(run_context, summary)
-    with open(os.path.join(args.out_dir, "manifest.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.run_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     append_runs_csv(os.path.join(args.out_dir, "runs.csv"), run_context, summary)
 
     print(f"\nDone. {summary['total_cases']} case(s), counts={summary['counts']}")
     print(f"Averages: {summary['averages']}")
     print(f"Blocked-correctness: {summary['blocked_correctness']}")
-    print(f"Results written to {args.out_dir}")
+    print(f"Results written to {args.run_dir}")
     return 0
 
 
@@ -211,8 +214,8 @@ async def _run_mode_b(args: argparse.Namespace, token: str) -> int:
         override_path = Path(args.override) if args.override else None
         swept = apply_override(rendered_dir / "params.override.cfg", override_path)
 
-        os.makedirs(args.out_dir, exist_ok=True)
-        rendered_copy_path = os.path.join(args.out_dir, "params.override.cfg")
+        os.makedirs(args.run_dir, exist_ok=True)
+        rendered_copy_path = os.path.join(args.run_dir, "params.override.cfg")
         shutil.copy(rendered_dir / "params.override.cfg", rendered_copy_path)
 
         secrets = _gather_secrets()
@@ -240,6 +243,11 @@ async def main_async(args: argparse.Namespace) -> int:
         print("No eval token - pass --eval-token or set EVAL_API_KEY.")
         return 1
 
+
+    # One folder per run so runs never overwrite each other. No ":" - invalid in Windows paths.
+    args.run_dir = os.path.join(args.out_dir, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ"))
+
+
     if args.instance_repo:
         return await _run_mode_b(args, token)
     return await _run_mode_a(args, token)
@@ -254,7 +262,7 @@ def main() -> None:
     parser.add_argument("--testset", required=True, help="Path to the Questions Excel file")
     parser.add_argument("--eval-token", default=None, help="Defaults to the EVAL_API_KEY env var")
     parser.add_argument("--limit", type=int, default=None, help="Only run the first N cases (cheap dry run)")
-    parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Where to write summary.json/cases.jsonl/cases.csv")
+    parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Base folder for results: each run gets its own timestamped subfolder; runs.csv stays here")
     parser.add_argument("--override", default=None, help="Mode B only: config override file to layer on top")
     parser.add_argument("--host-port", type=int, default=DEFAULT_HOST_PORT, help="Mode B only: local port for the temp container")
     args = parser.parse_args()

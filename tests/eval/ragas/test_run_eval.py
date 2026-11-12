@@ -1,6 +1,5 @@
-
 import asyncio
-
+import argparse, configparser, json
 import httpx
 import pytest
 
@@ -36,3 +35,48 @@ def test_success_passes_through():
             return await run_case(client, "http://x", "tok", "q?")
 
     assert asyncio.run(go())["status"] == "ok"
+
+
+def _patch_pipeline(monkeypatch):
+    import run_eval
+
+    async def fake_run_testset(endpoint, token, cases):
+        return [{
+            "case_id": 1, "question": "q?", "expected_answer": "e", "should_be_answered": True,
+            "answer": "a", "chunks": [], "status": "no_context", "error": None,
+        }]
+
+    async def fake_score_testset(metrics, results):
+        return [{**r, "scores": None} for r in results]
+
+    monkeypatch.setattr(run_eval, "load_testset", lambda path: [object()])
+    monkeypatch.setattr(run_eval, "run_testset", fake_run_testset)
+    monkeypatch.setattr(run_eval, "getconfig", lambda path: configparser.ConfigParser())
+    monkeypatch.setattr(run_eval, "build_judge", lambda config: object())
+    monkeypatch.setattr(run_eval, "build_metrics", lambda judge: {})
+    monkeypatch.setattr(run_eval, "score_testset", fake_score_testset)
+
+
+def test_each_run_gets_its_own_folder_and_summary_json(tmp_path, monkeypatch):
+    import run_eval
+
+    _patch_pipeline(monkeypatch)
+    testset = tmp_path / "testset.xlsx"
+    testset.write_bytes(b"x")  # only hashed, never parsed (load_testset is patched)
+
+    for stamp in ("run-1", "run-2"):
+        args = argparse.Namespace(
+            testset=str(testset), limit=None,
+            out_dir=str(tmp_path / "results"), run_dir=str(tmp_path / "results" / stamp),
+        )
+        assert asyncio.run(run_eval._score_and_record("http://x", "tok", args, {"mode": "A"})) == 0
+
+    for stamp in ("run-1", "run-2"):
+        run_dir = tmp_path / "results" / stamp
+        for name in ("cases.jsonl", "cases.csv", "manifest.json", "summary.json"):
+            assert (run_dir / name).exists()
+        assert json.loads((run_dir / "summary.json").read_text())["total_cases"] == 1
+
+    runs_csv = (tmp_path / "results" / "runs.csv").read_text().splitlines()
+    assert len(runs_csv) == 3  # header + one row per run
+    assert "run_dir" in runs_csv[0]
