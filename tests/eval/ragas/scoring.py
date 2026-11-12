@@ -3,7 +3,7 @@ Scores "ok"-status eval cases with RAGAS's v1 metrics (Step 3 - Scoring - of the
 plan): faithfulness, context recall, context precision, factual correctness.
 
 Only "ok" cases are scored - a failed/blocked/no-context case is never averaged in as if it
-were a real answer (see graph_runner.py's status taxonomy).
+were a real answer (see the status taxonomy in main.py's eval_query).
 """
 import os
 import sys
@@ -37,7 +37,7 @@ async def score_case(
 ) -> Dict[str, float]:
     """
     Score one "ok" case against all four v1 metrics. `chunks` is the same shape
-    graph_runner.run_case() returns (a list of {"text": ..., "metadata": ...} dicts) - only
+    run_eval.run_testset() builds per case (a list of {"text": ..., "metadata": ...} dicts) - only
     the text goes to RAGAS.
     """
     contexts = [chunk["text"] for chunk in chunks]
