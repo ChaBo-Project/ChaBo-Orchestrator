@@ -51,6 +51,9 @@ def render_config(instance_repo_dir: Path) -> Tuple[Path, str]:
     somewhere that isn't the user's persistent local checkout. Caller is responsible for
     cleaning this up once done with it (e.g. shutil.rmtree) - not deleted automatically here.
     """
+    # Absolute path: the scripts run with cwd=instance_repo_dir, so a relative path would be
+    # resolved a second time against that cwd and not be found.
+    instance_repo_dir = Path(instance_repo_dir).resolve()
     deploy_env = _parse_env_file(instance_repo_dir / "deploy.env")
     chabo_tag = deploy_env.get("CHABO_TAG")
     if not chabo_tag:
@@ -96,8 +99,14 @@ def apply_override(rendered_config_path: Path, override_path: Optional[Path]) ->
     config = configparser.ConfigParser(interpolation=None)
     config.read(rendered_config_path)
 
+    # ConfigParser.read() silently skips missing files, so a typo would run the eval
+    # without the requested override. Open the file explicitly to fail loudly instead.
     override = configparser.ConfigParser(interpolation=None)
-    override.read(override_path)
+    try:
+        with open(override_path, encoding="utf-8") as f:
+            override.read_file(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Override file not found: {override_path}") from None
 
     swept: Dict[str, Dict[str, str]] = {}
     for section in override.sections():
