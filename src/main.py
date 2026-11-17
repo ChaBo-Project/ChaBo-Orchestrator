@@ -29,6 +29,9 @@ from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
 from components.orchestration.ui_adapters import chatui_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
+from components.orchestration.streaming import (
+    answer_withheld_by_guards, make_output_classifier, make_output_filter,
+)
 from components.api import build_openai_router
 from components.utils import getconfig, instance_config_dir, load_prompt_overrides
 from components.retriever.filters import FILTER_VALUES, validate_filterable_fields
@@ -290,7 +293,8 @@ async def eval_query(request: EvalQueryRequest, x_eval_token: Optional[str] = He
     - "error": the run raised, the graph emitted an error event, retrieval explicitly
       failed, or no answer came back at all.
     - "no_context": retrieval succeeded but returned zero chunks.
-    - "blocked": the input guard blocked the question before retrieval ran.
+    - "blocked": the input guard blocked the question before retrieval ran, or the output
+      guards (blocklist/classifier) would have withheld the answer.
 
     Listens on both the "custom" channel (carries the citation-cleaned final answer, same
     text a user sees) and the "values" channel (carries the final graph state - the only
@@ -333,6 +337,18 @@ async def eval_query(request: EvalQueryRequest, x_eval_token: Optional[str] = He
         logger.error(f"eval_query pipeline error: {exc}", exc_info=True)
         return EvalQueryResponse(status="error", error=str(exc))
 
+    # Production withholds answers via the output blocklist/classifier inside consume_stream;
+    # apply the same guards here so a withheld answer is never scored as a real one.
+    if answer and await answer_withheld_by_guards(
+        answer,
+        make_output_filter(blocklist, BLOCKLIST_MESSAGE),
+        make_output_classifier(output_classification_config),
+    ):
+        answer = None
+        output_guard_blocked = True
+    else:
+        output_guard_blocked = False
+
     chunks = [
         EvalContext(text=doc.page_content, metadata=doc.metadata)
         for doc in final_state.get("raw_documents", [])
@@ -343,7 +359,7 @@ async def eval_query(request: EvalQueryRequest, x_eval_token: Optional[str] = He
     metadata = final_state.get("metadata", {})
     retrieval_success = metadata.get("retrieval_success")
 
-    if final_state.get("guard_blocked"):
+    if final_state.get("guard_blocked") or output_guard_blocked:
         status = "blocked"
     elif saw_error_event:
         status = "error"
