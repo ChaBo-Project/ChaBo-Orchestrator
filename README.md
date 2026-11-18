@@ -75,8 +75,10 @@ collection = your_collection
 [retrieval]
 top_k = 20
 reranker_top_k = 5
-reranker_enabled = true    # false = skip the reranker, return top reranker_top_k in retrieval order
-hybrid_enabled = false     # dense + BM25 sparse, fused by Qdrant's weighted RRF (see below)
+# Set to false to skip reranking.
+reranker_enabled = true
+# Set to true to combine dense and BM25 sparse retrieval.
+hybrid_enabled = false
 
 [generator]
 PROVIDER = huggingface
@@ -95,6 +97,21 @@ filterable_fields = project_id:str,year:int,tags:list
 MAX_TURNS = 3
 MAX_CHARS = 8000
 ```
+
+Put `#` comments on their own lines in `params.cfg` and `params.override.cfg`,
+as shown above. A comment after a setting is read as part of its value.
+
+If Qdrant is accessed through a Gradio gateway on Hugging Face Spaces, use
+`mode = gradio` and the full `https://` URL:
+
+```ini
+[qdrant]
+mode = gradio
+url = https://your-org-your-space.hf.space
+collection = your_collection
+```
+
+A bare hostname can be interpreted as a Hugging Face Space ID and return a 404.
 
 Hosted chat can opt into `PROVIDER = huggingface_router` using `HF_TOKEN`.
 This uses `https://router.huggingface.co/v1` and avoids the installed Hub SDK's
