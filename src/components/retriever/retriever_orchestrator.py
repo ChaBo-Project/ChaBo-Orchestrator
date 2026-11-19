@@ -279,7 +279,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 logger.info(f"Lazy Init: Creating GradioClient from {self.qdrant_url}")
                 self.gradio_client = GradioClient(
                     self.qdrant_url, 
-                    hf_token=self.qdrant_api_key # Assuming Gradio uses HF_TOKEN
+                    token=self.qdrant_api_key # Assuming Gradio uses HF_TOKEN
                 )
             return self.gradio_client
         
