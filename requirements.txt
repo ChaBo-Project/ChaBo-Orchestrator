@@ -17,7 +17,7 @@ fastapi==0.135.1
 langserve[all]==0.3.3
 uvicorn[standard]==0.42.0
 typing_extensions==4.15.0
-python-multipart==0.0.22
+python-multipart==0.0.31
 pydantic==2.12.3
 httpx==0.28.1
 python-dotenv==1.2.2
