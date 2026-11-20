@@ -31,7 +31,7 @@ from components.api import build_openai_router
 from components.utils import getconfig, instance_config_dir, load_prompt_overrides
 from components.retriever.filters import FILTER_VALUES, validate_filterable_fields
 from components.rewriter.db_context import DBContext, load_db_context_from_instance
-from components.generator.prompts import load_instance_guidelines
+from components.generator.prompts import load_instance_guidelines, load_instance_user_instructions
 from components.guardrails.input_guard import InputGuardClient
 from components.guardrails.output_guard import load_compiled_blocklist
 from components.guardrails.output_classification import OutputClassificationConfig, build_output_classification_messages
@@ -112,6 +112,8 @@ if not retriever_instance.reranker_enabled:
 # defaults + base prompt only). See FRAMEWORK_VALUES in components/generator/prompts.py
 # for the non-negotiable, code-only defaults this can never override.
 INSTANCE_GUIDELINES = load_instance_guidelines()
+# Instance-specific instructions placed in the user message (optional — empty/absent = none).
+INSTANCE_USER_INSTRUCTIONS = load_instance_user_instructions()
 
 # Tier-1 prompt overrides (optional — resolved once at startup, not per-request; see
 # load_prompt_overrides() docstring). Each node gets its own section via partial() below.
@@ -119,7 +121,8 @@ PROMPT_OVERRIDES = load_prompt_overrides()
 
 # Get module-specific LLM configs
 generation_client = build_llm_client(config, "generation")
-generator_instance = Generator(llm_client=generation_client, instance_guidelines=INSTANCE_GUIDELINES)
+generator_instance = Generator(llm_client=generation_client, instance_guidelines=INSTANCE_GUIDELINES,
+                               instance_user_instructions=INSTANCE_USER_INSTRUCTIONS)
 
 filter_extraction_client = build_llm_client(config, "filter_extraction") if FILTERABLE_FIELDS else None
 query_rewrite_client = build_llm_client(config, "query_rewrite") if REWRITER_ENABLED else None

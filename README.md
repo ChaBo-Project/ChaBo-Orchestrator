@@ -71,7 +71,7 @@ gates retrieval on a safe verdict.
 
 > **Guardrails** are two independent, opt-in defenses. The **input guard** classifies the query for prompt-injection/jailbreak and harmful content before retrieval (runs in parallel with rewrite/filter, ≈zero added latency); an unsafe verdict short-circuits to a fixed message. The **output guard** screens the streamed answer against a multilingual blocklist and replaces it with a notice on a hit. Configured under `[input_guard]` / `[output_guard]`.
 
-**Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere, Azure OpenAI
+**Supported LLM Providers:** HuggingFace (Inference Endpoints/serverless, or the HF router via `huggingface_router`), OpenAI, Anthropic, Cohere, Azure OpenAI
 
 ## Deployment
 
@@ -116,6 +116,14 @@ filterable_fields = project_id:str,year:int,tags:list
 MAX_TURNS = 3
 MAX_CHARS = 8000
 ```
+
+Hosted chat can opt into `PROVIDER = huggingface_router` using `HF_TOKEN`.
+This uses `https://router.huggingface.co/v1` and avoids the installed Hub SDK's
+provider registry. Set `INFERENCE_PROVIDER = deepinfra` to select that provider,
+or `auto` to let the router choose. A suffix already present in `MODEL` takes
+precedence. Optional `ORGANIZATION` supplies the `X-HF-Bill-To` header.
+Rate-limit (429) and 5xx errors are retried up to 2 times by the OpenAI SDK before failing.
+Existing providers and defaults are unchanged.
 
 #### Metadata Filters Setup
 
@@ -221,6 +229,8 @@ The generator's system prompt is composed from three layers, in this order:
 
 If an instance guideline ever conflicts with a Framework Value, the composed prompt tells the model the Framework Value takes precedence.
 
+`BASE_PROMPT` has no follow-up-question policy: by default answers end without suggesting a follow-up question. A deployment that wants follow-ups (or other short answer-shaping rules) adds them via `instance.yaml` — in `instance_guidelines` (system prompt), or in `instance_user_instructions`, which places them in the user message after the question and before the closing language instruction. Prefer `instance_guidelines`; use `instance_user_instructions` only for short rules that the model follows unreliably from the system prompt, since text placed next to the question carries strong weight and can override `BASE_PROMPT` behaviour (e.g. citations) if it contradicts it.
+
 **Output-guard enforcement of these two layers is asymmetric, by design:** the windowed output classifier (above) always checks the answer against `FRAMEWORK_VALUES` (a violation always blocks, using `classification_message` — not configurable). It can *additionally* check compliance with your instance guidelines, but only under `mode = llm` (the `classifier`/Qwen3Guard-Gen backend is a fixed-taxonomy model and cannot evaluate custom instance text at all). The consequence for instance-guideline non-compliance is your own choice:
 
 ```ini
@@ -247,7 +257,9 @@ Pass API keys as environment variables at runtime:
 
 **Azure:** every task using `provider = azure` needs its own endpoint: `[generator] AZURE_ENDPOINT` and `llm_azure_endpoint` in `[metadata_filters]` / `[query_rewriter]` / `[input_guard]` / `[output_guard]` (env: `GENERATOR_AZURE_ENDPOINT`, `FILTER_EXTRACTION_LLM_AZURE_ENDPOINT`, `QUERY_REWRITE_LLM_AZURE_ENDPOINT`, `INPUT_GUARD_LLM_AZURE_ENDPOINT`, `OUTPUT_CLASSIFICATION_LLM_AZURE_ENDPOINT`). It must be a full `https://` URL; ChaBo refuses to start otherwise, to avoid requests (and the Azure key) going to api.openai.com, the OpenAI SDK's default.
 
-**Reasoning off / chat-template options (optional):** any task can send extra chat-template variables as a JSON object: `[generator] CHAT_TEMPLATE_KWARGS` and `llm_chat_template_kwargs` in the other four sections (env: `GENERATOR_CHAT_TEMPLATE_KWARGS`, `FILTER_EXTRACTION_LLM_CHAT_TEMPLATE_KWARGS`, …). Example: `{"enable_thinking": false}` turns off reasoning on Qwen3-style models, cutting time to first token from ~15 s to ~1 s; reasoning tokens are invisible in the answer but still billed. Supported for `huggingface`, `openai` and `azure` (OpenAI-compatible servers such as the HF router, vLLM or SGLang); other providers fail at startup if it is set. Unset = requests unchanged. Which keys a model accepts depends on its chat template.
+**Reasoning off / chat-template options (optional):** any task can send extra chat-template variables as a JSON object: `[generator] CHAT_TEMPLATE_KWARGS` and `llm_chat_template_kwargs` in the other four sections (env: `GENERATOR_CHAT_TEMPLATE_KWARGS`, `FILTER_EXTRACTION_LLM_CHAT_TEMPLATE_KWARGS`, …). Example: `{"enable_thinking": false}` turns off reasoning on Qwen3-style models, cutting time to first token from ~15 s to ~1 s; reasoning tokens are invisible in the answer but still billed. Supported for `huggingface`, `huggingface_router`, `openai` and `azure` (OpenAI-compatible servers such as the HF router, vLLM or SGLang); other providers fail at startup if it is set. Unset = requests unchanged. Which keys a model accepts depends on its chat template.
+
+**Source list (optional):** `[generator] SOURCES_DISPLAY` (env: `GENERATOR_SOURCES_DISPLAY`) chooses which sources are listed under the answer: `cited` (default, only the sources the answer cites) or `all_retrieved` (every document given to the model). Each source is labelled with the `[n]` the answer uses for it, gaps included (`- [2] …`, `- [4] …`). `all_retrieved` needs a ChaBo-ChatUI release that reads the number on each source line; older releases label the chips wrongly. Format details: [`docs/api-spec.md`](docs/api-spec.md), "Sources and citation numbers".
 
 #### Build and Run
 
@@ -286,13 +298,13 @@ from today.
 |---|---|---|---|
 | `params.override.cfg` | 1 — pipeline knobs | INI, same `[section]key=value` shape as `params.cfg` | Retrieval tuning, endpoints, provider/model selection, guardrail toggles. Layered on top of `params.cfg`; later value wins per key. |
 | `prompt_overrides.md` | 1 — prompt engineering | Markdown, `## section_name` headers | `query_rewrite_steps`, `filter_extraction_steps` — overrides the *decision-making* portion of those two prompts only. The output JSON schema/contract is always core-owned and never overridden, so a bad override can degrade quality but can't break parsing. |
-| `instance.yaml` | 2 — safe content | YAML, four independent top-level keys | `filters` (valid values for `[metadata_filters] filterable_fields`), `db_context` (`abstract`/`glossary` for the query rewriter), `blocklist` (`{lang: [terms]}`, additions on top of the shipped list — never removes from it), `instance_guidelines` (plain text appended to the system prompt, subordinate to the framework's non-negotiable content rules). |
+| `instance.yaml` | 2 — safe content | YAML, five independent top-level keys | `filters` (valid values for `[metadata_filters] filterable_fields`), `db_context` (`abstract`/`glossary` for the query rewriter), `blocklist` (`{lang: [terms]}`, additions on top of the shipped list — never removes from it), `instance_guidelines` (plain text appended to the system prompt, subordinate to the framework's non-negotiable content rules), `instance_user_instructions` (short plain-text rules placed in the user message after the question — see "System Prompt" above). |
 
 **Tier 1 is "change at your own risk."** These values affect pipeline behavior directly — a
 bad edit can degrade retrieval or generation quality, not just wording. Tier 2 is safe for a
 non-engineer to edit: worst case is a less helpful answer, never a broken pipeline.
 
-`instance.yaml` example, showing all four keys:
+`instance.yaml` example, showing all five keys:
 
 ```yaml
 filters:
@@ -318,6 +330,10 @@ blocklist:
 
 instance_guidelines: |
   Keep answers focused on crop cultivation topics. Prefer metric units.
+
+instance_user_instructions: |
+  If the context covers a useful related topic your answer did not, end with one short
+  follow-up question offering to explain it. Skip it when you only explain missing information.
 ```
 
 Note: `db_context`'s `target_language` for cross-lingual rewriting is **not** part of this
