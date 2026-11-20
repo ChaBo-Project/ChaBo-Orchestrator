@@ -31,7 +31,9 @@ Deviations from OpenAI's API:
 - 1 non-standard request field carries attachments, since no chat protocol does:
    - `files`: `[{"name": ..., "content": "<extracted text>"}]` — see below
 - Responses may carry a top-level `citations` array (Perplexity-style). Sources are always *also*
-  rendered as markdown in the message body.
+  rendered as markdown in the message body, one `- [n] [title](uri)` line each, where `n` is
+  the `[n]` the answer uses. The array is positional (`citations[n - 1]` is source `n`, gaps
+  padded with `""`). See `docs/api-spec.md`, "Sources and citation numbers".
 
 `GET /v1/models` advertises a single model id (`[api] model_name`) — this is how OpenWebUI
 and LibreChat discover the endpoint. It names the deployment, not the LLM.
@@ -115,6 +117,17 @@ Three ChatUI-shaped workarounds can then be deprecated:
 3. `TRAILING_FLUSH_DELAY` (the sleep that keeps ChatUI's parser from dropping coalesced
   trailing chunks). The OpenAI renderer's frames are self-delimiting, so it is not required.
 
+**Source numbers in ChatUI.** ChatUI releases up to 0.9.3 ignore the `[n]` on each source line
+and label chip i with the i-th cited number found in the answer. That is only correct while the
+list holds exactly the cited sources and every citation is a single `[n]` marker. Two cases
+therefore need a ChatUI release that reads the number from each source line:
+
+- `[generator] SOURCES_DISPLAY = all_retrieved`, and
+- answers with grouped citations such as `[1, 3]`, even in the default `cited` mode: older
+  ChatUI labels those sources `[1]` and `[2]`.
+
+Single `[n]` and adjacent `[1][3]` citations are labelled correctly by any ChatUI release, so
+for answers that avoid grouped citations the two releases can still be deployed independently.
 
 ## Adding another frontend
 
