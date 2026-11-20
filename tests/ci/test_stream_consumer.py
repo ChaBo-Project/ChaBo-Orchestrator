@@ -16,7 +16,7 @@ import pytest
 
 from components.guardrails.output_guard import StreamingBlocklistFilter, compile_blocklist
 from components.orchestration.renderers import MarkdownRenderer, OpenAIChunkRenderer
-from components.orchestration.streaming import consume_stream, prepare_conversation
+from components.orchestration.streaming import answer_withheld_by_guards, consume_stream, prepare_conversation
 
 SOURCES = [{"title": "Wheat guide", "uri": "https://example.org/wheat"}]
 FILTERS = {"filters": {"crop_type": ["wheat"]}, "narrowed": False}
@@ -206,3 +206,21 @@ def test_a_request_with_a_user_message_logs_no_warning(caplog):
 
     assert query == "What is ChaBo?"
     assert "No user message" not in caplog.text
+
+
+def test_answer_with_blocked_term_is_withheld():
+    assert asyncio.run(answer_withheld_by_guards("this has a badword in it", _blocklist_filter())) is True
+
+
+def test_clean_answer_is_not_withheld():
+    assert asyncio.run(answer_withheld_by_guards("a normal answer", _blocklist_filter())) is False
+
+
+def test_classifier_verdict_withholds_answer_and_is_closed():
+    classifier = FlaggingClassifier("unsafe")
+    assert asyncio.run(answer_withheld_by_guards("some unsafe text", classifier=classifier)) is True
+    assert classifier.closed
+
+
+def test_no_guards_never_withholds():
+    assert asyncio.run(answer_withheld_by_guards("anything")) is False
