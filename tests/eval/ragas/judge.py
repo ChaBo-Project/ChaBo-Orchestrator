@@ -23,6 +23,11 @@ class UnsupportedJudgeProviderError(ValueError):
     """Raised when [ragas] JUDGE_PROVIDER isn't a provider v1 supports."""
 
 
+def resolve_judge_model(config) -> str:
+    """The judge model actually used: RAGAS_JUDGE_MODEL env var, else [ragas] JUDGE_MODEL."""
+    return get_config_value(config, "ragas", "JUDGE_MODEL", "RAGAS_JUDGE_MODEL").strip()
+
+
 def build_judge(config) -> Any:
     """
     Build the RAGAS judge LLM from the [ragas] section of params.cfg. Environment variables
@@ -41,7 +46,7 @@ def build_judge(config) -> Any:
             "'azure'."
         )
 
-    model = get_config_value(config, "ragas", "JUDGE_MODEL", "RAGAS_JUDGE_MODEL").strip()
+    model = resolve_judge_model(config)
     max_tokens = int(
         get_config_value(config, "ragas", "JUDGE_MAX_TOKENS", "RAGAS_JUDGE_MAX_TOKENS", fallback=1024)
     )

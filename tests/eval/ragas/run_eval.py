@@ -38,7 +38,7 @@ from components.utils import getconfig  # noqa: E402  (after sys.path setup, sam
 
 from config_render import apply_override, render_config  # noqa: E402
 from container_runner import temp_container  # noqa: E402
-from judge import build_judge, UnsupportedJudgeProviderError  # noqa: E402
+from judge import build_judge, resolve_judge_model, UnsupportedJudgeProviderError  # noqa: E402
 from run_record import (  # noqa: E402
     append_runs_csv, build_manifest, summarize, test_set_hash, write_cases_csv, write_cases_jsonl,
 )
@@ -188,7 +188,7 @@ async def _score_and_record(
         "chabo_commit": _git_commit(),
         "testset_path": args.testset,
         "testset_hash": test_set_hash(args.testset),
-        "judge_model": config.get("ragas", "JUDGE_MODEL", fallback=None),
+        "judge_model": resolve_judge_model(config),
         "num_cases": len(scored),
         "run_dir": os.path.basename(args.run_dir),
         **extra_run_context,
@@ -210,7 +210,7 @@ async def _run_mode_a(args: argparse.Namespace, token: str) -> int:
 
 
 async def _run_mode_b(args: argparse.Namespace, token: str) -> int:
-    instance_repo_dir = Path(args.instance_repo)
+    instance_repo_dir = Path(args.instance_repo).resolve()
     print(f"Rendering config from {instance_repo_dir}...")
     rendered_dir, chabo_tag = render_config(instance_repo_dir)
     try:
