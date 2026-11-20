@@ -256,6 +256,7 @@ async def process_query_streaming(
     filename: str = None,
     ingestor_context: str = None,
     session_type: str = "chatui",
+    supplied_documents=None,
 ):
     """
     Process a query through the LangGraph workflow with streaming.
@@ -272,6 +273,8 @@ async def process_query_streaming(
         "metadata_filters": metadata_filters,
         "user_messages_history": user_messages_history,
     }
+    if supplied_documents is not None:
+        initial_state["supplied_documents"] = supplied_documents
 
     # Add file content if present
     if file_content and filename:

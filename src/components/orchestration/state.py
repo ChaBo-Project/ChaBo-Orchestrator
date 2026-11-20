@@ -11,6 +11,7 @@ class GraphState(TypedDict, total=False):
     query: str
     context: str
     raw_documents: List[Document]  # Retrieved documents for generation
+    supplied_documents: List[Document]  # Trusted optional service route only; [] means no context.
     ingestor_context: str
     result: str
     sources: List[Dict[str, str]]
