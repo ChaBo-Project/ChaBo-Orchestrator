@@ -54,7 +54,8 @@ def build_managed_context_router(graph, *, key, blocklist=None,
     @router.post("/internal/v1/managed-answer", include_in_schema=False)
     async def answer(request: Request):
         expected = "Bearer " + key
-        if not hmac.compare_digest(request.headers.get("authorization", ""), expected):
+        authorization = request.headers.get("authorization", "")
+        if not authorization.isascii() or not hmac.compare_digest(authorization, expected):
             raise HTTPException(401, "Service credential required.")
         raw = bytearray()
         async for chunk in request.stream():

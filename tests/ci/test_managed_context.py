@@ -53,6 +53,14 @@ def test_managed_context_authentication_and_body_limits():
     assert not graph.calls
 
 
+def test_non_ascii_service_credential_is_rejected_before_graph_execution():
+    graph = Graph()
+    response = request(graph, payload(), b"Bearer \xff")
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Service credential required."}
+    assert not graph.calls
+
+
 def test_selected_context_and_central_history_reach_the_existing_graph():
     graph = Graph()
     value = payload()
