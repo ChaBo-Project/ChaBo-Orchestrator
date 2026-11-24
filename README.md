@@ -75,8 +75,10 @@ collection = your_collection
 [retrieval]
 top_k = 20
 reranker_top_k = 5
-reranker_enabled = true    # false = skip the reranker, return top reranker_top_k in retrieval order
-hybrid_enabled = false     # dense + BM25 sparse, fused by Qdrant's weighted RRF (see below)
+# Set to false to skip reranking and keep the first reranker_top_k results in retrieval order.
+reranker_enabled = true
+# Set to true to combine dense and BM25 sparse retrieval.
+hybrid_enabled = false
 
 [generator]
 PROVIDER = huggingface
@@ -96,9 +98,22 @@ MAX_TURNS = 3
 MAX_CHARS = 8000
 ```
 
-> In `gradio` mode, `[qdrant] url` must include `https://`. A bare hostname is read as a Hugging Face Space ID and fails with a confusing 404.
->
-> A `#` that follows a space starts a comment, so `key = value  # note` is read as `value`.
+Put `#` comments on their own lines in `params.cfg` and `params.override.cfg`,
+as shown above. A `#` that follows a space starts a comment, so
+`key = value  # note` is read as `value`.
+
+If Qdrant is accessed through a Gradio gateway on Hugging Face Spaces, use
+`mode = gradio` and the full `https://` URL:
+
+```ini
+[qdrant]
+mode = gradio
+url = https://your-org-your-space.hf.space
+collection = your_collection
+```
+
+A bare hostname is rejected at startup: `gradio_client` would read it as a
+Hugging Face Space ID and fail with a 404.
 
 Hosted chat can opt into `PROVIDER = huggingface_router` using `HF_TOKEN`.
 This uses `https://router.huggingface.co/v1` and avoids the installed Hub SDK's
@@ -528,18 +543,8 @@ Runs each question through the full retriever pipeline, capturing both raw vecto
 **Stage 2 — LLM Judging** (`--mode batch`)
 Loads the retrieval results and uses the configured LLM to judge each retrieved document for relevance. Saves a judged report to `tests/eval/results/judged_eval_report.json`. Supports **checkpointing** — if interrupted, it resumes from where it left off.
 
-**Stage 3 — RAGAS** (`--mode ragas`)
-Runs the full pipeline end-to-end (retrieval + generation) and scores answer quality using [RAGAS](https://docs.ragas.io) metrics. Each run saves a timestamped JSON report to `tests/eval/results/` and appends a summary row to `tests/eval/results/ragas_history.csv` for tracking quality over time.
-
-### Setup
-
-```bash
-cd /path/to/chabo
-source chabo_env/bin/activate
-
-# For RAGAS mode only — install the extended dependencies
-pip install -r tests/eval/requirements-eval.txt
-```
+**Stage 3 — RAGAS** (separate CLI: `tests/eval/ragas/run_eval.py`)
+Sends each question to a running Orchestrator over HTTP (`/eval-query`), then scores the answers with [RAGAS](https://docs.ragas.io) metrics (faithfulness, context recall, context precision, factual correctness). Every run is saved in its own timestamped folder under `tests/eval/ragas/results/`, with a `summary.json`, and one row is appended to `runs.csv` for tracking quality over time. See [RAGAS evaluation](#ragas-evaluation-answer-quality) below.
 
 ### Define your test questions
 
@@ -555,7 +560,7 @@ Each entry supports the following fields:
 |-------|-------------|-------------|
 | `question` / `turns` | all modes | The query or conversation turns |
 | `expected_filters` | retrieval, batch, sample | Ground truth metadata filters |
-| `expected_answer` | ragas | Rough ground truth answer string |
+| `expected_answer`  | legacy | Rough ground truth answer string. Not read by the retrieval/batch/sample modes. RAGAS uses its own testset file, see below |
 | `expected_sources` | none (reserved) | List of `{filename, page}` dicts identifying the expected source document(s). Not currently read by any eval mode, including RAGAS — reserved for a future deterministic retrieval-hit check |
 
 These should be realistic queries representative of what actual users ask — curated with knowledge of your corpus. The examples below assume an **agriculture knowledge base**; replace them with questions and filter values relevant to your own domain:
@@ -592,8 +597,6 @@ safeguard_questions = [
 ]
 ```
 
-Cases with `expected_answer` still set to `TODO` are skipped automatically in RAGAS mode.
-
 > **Note:** `test_questions.py` is for automated scoring via LLM-as-judge (`eval.py`).
 > For manual qualitative spot-checks with categorised scenarios, use
 > `tests/health/test_rag_pipeline.py` instead — the two complement each other.
@@ -615,31 +618,56 @@ python tests/eval/eval.py --mode batch --filters
 
 # Quick sample run (first 2 questions only, useful for testing)
 python tests/eval/eval.py --mode sample
-
-# Stage 3: Full pipeline eval with RAGAS metrics
-python tests/eval/eval.py --mode ragas
-python tests/eval/eval.py --mode ragas --filters
 ```
 
 `--mode retrieval` is the default if no flag is provided.
 
 Results are saved to `tests/eval/results/` (gitignored). The `--filters` flag appends `_filtered` to all output filenames — compare `judged_eval_report.json` vs `judged_eval_report_filtered.json` to measure the impact of filtering on retrieval quality.
 
-### RAGAS configuration
+### RAGAS evaluation (answer quality)
 
-RAGAS mode uses a separate judge LLM configured in `params.cfg`'s `[ragas]` section — independent of the chatbot's generator's `[generator]` section, to avoid self-preference bias in scoring:
+RAGAS runs as a separate CLI that calls a running Orchestrator over HTTP. It has its own dependencies, so keep them out of the main venv:
+
+```bash
+python -m venv venv-eval
+source venv-eval/bin/activate        # Windows (Git Bash): source venv-eval/Scripts/activate
+python -m pip install -r tests/eval/ragas/requirements-eval.txt
+```
+
+The Orchestrator must expose `/eval-query`, which is only enabled when `EVAL_API_KEY` is set. Set the same token for the CLI, then run from the repo root:
+
+```bash
+python tests/eval/ragas/run_eval.py --endpoint http://localhost:7860 --testset path/to/questions.xlsx --limit 2
+```
+
+- Run it from the repo root; the script uses repo-relative imports.
+- `--endpoint` uses an already-running Orchestrator; `--instance-repo` starts a temporary container from a local instance repo instead.
+- `--limit N` runs only the first N cases (cheap dry run).
+- Output: a UTC-timestamped folder per run under `tests/eval/ragas/results/` (gitignored, override with `--out-dir`), containing the per-case results and `summary.json`. A row is appended to `runs.csv` in the same base folder for each run.
+- A rejected token (401/404) stops the run before any judging cost.
+
+The judge LLM is configured in `params.cfg`'s `[ragas]` section — independent of the `[generator]` section, to avoid self-preference bias in scoring. Only Azure is supported in v1:
 
 ```ini
 [ragas]
-JUDGE_PROVIDER = your-provider        # openai, anthropic, cohere, azure, huggingface
-JUDGE_MODEL = your-model-name-or-url
+# LLM used by the RAGAS eval CLI (tests/eval/ragas/run_eval.py) to judge/score
+# metrics (faithfulness, context recall, context precision, factual correctness).
+# Eval-only — never read by the running application; kept here purely so all runtime
+# config lives in one documented place (see CLAUDE.md).
+# Deliberately independent of [generator]: judging with the same model that generated
+# the answer risks self-preference bias in RAGAS-style scoring.
+# Supported providers: azure (v1)
+JUDGE_PROVIDER = azure
+# The Azure deployment name of the judge model
+JUDGE_MODEL = your-deployment-name
+JUDGE_MAX_TOKENS = 1024
+JUDGE_TEMPERATURE = 0.1
 
-METRICS = faithfulness,answer_relevancy,context_recall,context_precision
+# Azure OpenAI endpoint of the judge deployment
+AZURE_ENDPOINT = https://your-resource.openai.azure.com/openai/v1/
 ```
 
-Set the corresponding API key as an environment variable (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). RAGAS metrics rely on the judge model's reasoning ability — use a capable model for reliable scores.
-
-Each run produces a timestamped JSON with per-question scores (e.g. `ragas_report_20260721_143022.json`) and appends a summary row to `ragas_history.csv` for tracking quality trends across releases and feature updates.
+Set the judge's API key as the environment variable `AZURE_API_KEY`. RAGAS metrics rely on the judge model's reasoning ability — use a capable model for reliable scores.
 
 ### Filter Ground Truth Checking
 

@@ -245,6 +245,35 @@ def make_output_classifier(classification_config: Optional[OutputClassificationC
     return StreamingClassifier(classification_config)
 
 
+async def answer_withheld_by_guards(
+    answer: str,
+    output_filter: Optional[StreamingBlocklistFilter] = None,
+    classifier: Optional[StreamingClassifier] = None,
+) -> bool:
+    """
+    Whether the output guards would withhold this complete answer. Used by non-streaming
+    callers (the eval route) that must not score text a real user would never see.
+    Same guards and same fresh-per-request instances as consume_stream.
+    """
+    try:
+        if output_filter is not None:
+            _, hit = output_filter.feed(answer)
+            if not hit:
+                _, hit = output_filter.flush_final()
+            if hit:
+                return True
+        if classifier is not None:
+            if classifier.feed(answer):
+                return True
+            _, hit = await classifier.flush_final()
+            if hit:
+                return True
+        return False
+    finally:
+        if classifier is not None:
+            await classifier.aclose()
+
+
 async def process_query_streaming(
     compiled_graph,
     query: str,
@@ -264,6 +293,8 @@ async def process_query_streaming(
     and send it on the chat request). `ingest_node` leaves it untouched when no raw
     `file_content` is supplied.
     """
+    # This initial_state block is mirrored in main.py's eval_query() route -
+    # keep both in sync if this shape changes.
     initial_state = {
         "query": query,
         "metadata": {"session_type": session_type},
