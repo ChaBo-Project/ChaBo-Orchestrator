@@ -18,9 +18,11 @@ LangGraph nodes for the RAG pipeline (wired in workflow.py).
 Nodes stream to the UI through LangGraph's custom stream `writer`.
 """
 import logging
+import asyncio
+import json
 logger = logging.getLogger(__name__)
 from datetime import datetime
-import json
+from aiohttp import ClientResponseError
 from typing import TYPE_CHECKING, Dict, Any, Optional
 from langchain_core.documents import Document
 from .telemetry import extract_retriever_telemetry
@@ -391,7 +393,20 @@ async def rewrite_query_node(
             db_context, original_query, conversation_context,
             query_rewrite_steps=query_rewrite_steps,
         )
-        raw = await llm_client.ainvoke(messages)
+        try:
+            raw = await llm_client.ainvoke(messages)
+        except ClientResponseError as error:
+            retry_after = (error.headers or {}).get("Retry-After", "").strip()
+            if error.status != 429 or not retry_after.isascii() or not retry_after.isdecimal():
+                raise
+
+            delay = int(retry_after)
+            if delay > 5:
+                raise
+
+            log_provider_rate_limit("query_rewrite", error)
+            await asyncio.sleep(delay)
+            raw = await llm_client.ainvoke(messages)
         parsed = _parse_rewrite_response(raw)
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()
