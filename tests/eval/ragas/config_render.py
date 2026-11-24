@@ -20,6 +20,7 @@ import configparser
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -71,8 +72,11 @@ def render_config(instance_repo_dir: Path) -> Tuple[Path, str]:
         ("render-config.py", [str(instance_config_dir / "params.override.cfg.template"), str(output_path)]),
         ("validate-config.py", [str(output_path)]),
     ):
+        # sys.executable, not "python3": Windows has no python3.exe (a venv's Scripts\ only
+        # has python.exe, and the "python3" on PATH is often the Microsoft Store alias).
+        # It also guarantees the scripts run in the same environment as this CLI.
         result = subprocess.run(
-            ["python3", str(instance_repo_dir / "scripts" / script), *script_args],
+            [sys.executable, str(instance_repo_dir / "scripts" / script), *script_args],
             capture_output=True, text=True, env=env, cwd=instance_repo_dir,
         )
         if result.returncode != 0:
