@@ -24,7 +24,7 @@ fastavro==1.12.2
 ffmpy==1.0.0
 filelock==3.29.7
 frozenlist==1.8.0
-fsspec==2026.4.0
+fsspec==2026.6.0
 gradio==5.50.0
 gradio_client==1.14.0
 greenlet==3.5.3
