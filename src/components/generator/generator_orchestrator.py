@@ -14,7 +14,7 @@ from .sources import (
     process_context, parse_citations, 
     extract_sources, create_sources_list, clean_citations, SOURCES_DISPLAY_MODES
 )
-
+from components.llm.rate_limit import log_provider_rate_limit
 
 
 class Generator:
@@ -192,6 +192,7 @@ class Generator:
                 return answer       
 
         except Exception as e:
+            log_provider_rate_limit("generation", e)
             logger.exception("Generation failed")
             error_msg = str(e)
             return {"error": error_msg} if chatui_format else f"Error: {error_msg}"
@@ -254,6 +255,7 @@ class Generator:
                 yield {"event": "end", "data": {}}
 
         except Exception as e:
+            log_provider_rate_limit("generation", e)
             logger.exception("Streaming generation failed")
             error_msg = str(e)
             if chatui_format:

@@ -27,6 +27,7 @@ from .telemetry import extract_retriever_telemetry
 from components.ingestor.ingestor import process_document
 from components.logging_setup import mark_blocked, mark_retrieval_outcome
 from components.generator.prompts import build_filter_extraction_messages, build_query_rewrite_messages
+from components.llm.rate_limit import log_provider_rate_limit
 
 # Assuming these Type definitions are available from state.py and retriever_orchestrator.py
 if TYPE_CHECKING:
@@ -394,6 +395,7 @@ async def rewrite_query_node(
         parsed = _parse_rewrite_response(raw)
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()
+        log_provider_rate_limit("query_rewrite", e)
         logger.warning(f"rewrite_query_node: LLM call failed ({e}); falling back to original query")
         metadata.update({
             "rewrite_duration": duration,
