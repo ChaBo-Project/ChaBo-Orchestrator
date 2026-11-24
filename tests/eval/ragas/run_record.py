@@ -37,7 +37,8 @@ def test_set_hash(path: str, length: int = 12) -> str:
 def summarize(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     The four metric averages plus average answer length over "ok" cases only, a count of
-    cases per status, and blocked-correctness over all cases.
+    cases per status, the number of "ok" cases the judge failed to score, and
+    blocked-correctness over every case that did not error.
 
     An average is None (not 0) when there are zero "ok" cases to average - a missing number
     reads as "nothing was scored", not as "everything scored zero".
@@ -55,9 +56,11 @@ def summarize(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     status_counts = Counter(r["status"] for r in results)
 
     # Did the guard block exactly the cases that shouldn't be answered, and answer exactly
-    # the ones that should? Checked over every case, not just "ok" ones.
+    # the ones that should? "error" cases are left out: a failed request says nothing about
+    # the guard, and counting it as "not blocked" would score an all-error run as perfect.
+    judged = [r for r in results if r["status"] != "error"]
     blocked_matches = [
-        (r["status"] == "blocked") == (not r["should_be_answered"]) for r in results
+        (r["status"] == "blocked") == (not r["should_be_answered"]) for r in judged
     ]
     correct = sum(blocked_matches)
     total = len(blocked_matches)
@@ -65,10 +68,12 @@ def summarize(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "total_cases": len(results),
         "counts": {status: status_counts.get(status, 0) for status in ("ok", "no_context", "blocked", "error")},
+        "scoring_errors": sum(1 for r in results if r.get("scoring_error")),
         "averages": averages,
         "blocked_correctness": {
             "correct": correct,
             "total": total,
+            "excluded_errors": len(results) - total,
             "accuracy": round(correct / total, 3) if total else None,
         },
     }

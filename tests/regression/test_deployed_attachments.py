@@ -63,7 +63,7 @@ class DeployedAttachmentTests(unittest.TestCase):
         source_entries = {
             int(number): entry
             for number, entry in re.findall(
-                r"(?m)^(\d+)\.\s+(.+)$", sources
+                r"(?m)^- \[(\d+)\]\s+(.+)$", sources
             )
         }
 

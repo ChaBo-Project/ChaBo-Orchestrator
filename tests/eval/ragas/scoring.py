@@ -72,6 +72,9 @@ async def score_testset(metrics: Dict[str, Any], results: List[Dict[str, Any]]) 
     context_recall, require a real reference to score against - cases deliberately left
     without one, like a should-be-declined question that got answered anyway, can't be
     scored even though they did get a real answer).
+
+    A judge failure on one case (rate limit, timeout, malformed output) does not stop the
+    run: that case gets scores=None plus a scoring_error message, and the rest are scored.
     """
     scored: List[Dict[str, Any]] = []
     for result in results:
@@ -79,13 +82,18 @@ async def score_testset(metrics: Dict[str, Any], results: List[Dict[str, Any]]) 
             scored.append({**result, "scores": None})
             continue
 
-        scores = await score_case(
-            metrics,
-            question=result["question"],
-            answer=result["answer"],
-            expected_answer=result["expected_answer"],
-            chunks=result["chunks"],
-        )
+        try:
+            scores = await score_case(
+                metrics,
+                question=result["question"],
+                answer=result["answer"],
+                expected_answer=result["expected_answer"],
+                chunks=result["chunks"],
+            )
+        except Exception as exc:
+            print(f"Scoring failed for case #{result.get('case_id')}: {exc}")
+            scored.append({**result, "scores": None, "scoring_error": str(exc)})
+            continue
         scored.append({**result, "scores": scores})
 
     return scored

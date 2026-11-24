@@ -158,26 +158,33 @@ async def _score_and_record(
         cases = cases[: args.limit]
     print(f"Loaded {len(cases)} case(s) from {args.testset}.")
 
+    # Build the judge before running any case: a judge config error (missing key, endpoint,
+    # or model) must stop the run before it spends on endpoint queries.
+    config = getconfig("params.cfg")
+    try:
+        judge = build_judge(config)
+    except (UnsupportedJudgeProviderError, ValueError, RuntimeError) as exc:
+        print(f"Judge configuration error: {exc}")
+        return 1
+    metrics = build_metrics(judge)
+
     try:
         results = await run_testset(endpoint, token, cases)
     except EvalAuthError as exc:
         print(f"Aborting: {exc}")
         return 1
 
-    config = getconfig("params.cfg")
-    try:
-        judge = build_judge(config)
-    except UnsupportedJudgeProviderError as exc:
-        print(f"Judge configuration error: {exc}")
-        return 1
-    metrics = build_metrics(judge)
+    # Save the raw answers before scoring, so a crash during scoring does not lose them.
+    # Overwritten below with the scored version.
+    os.makedirs(args.run_dir, exist_ok=True)
+    cases_jsonl_path = os.path.join(args.run_dir, "cases.jsonl")
+    write_cases_jsonl(results, cases_jsonl_path)
 
     print("Scoring with RAGAS...")
     scored = await score_testset(metrics, results)
 
-    os.makedirs(args.run_dir, exist_ok=True)
     summary = summarize(scored)
-    write_cases_jsonl(scored, os.path.join(args.run_dir, "cases.jsonl"))
+    write_cases_jsonl(scored, cases_jsonl_path)
     write_cases_csv(scored, os.path.join(args.run_dir, "cases.csv"))
     with open(os.path.join(args.run_dir, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
@@ -201,6 +208,8 @@ async def _score_and_record(
     print(f"\nDone. {summary['total_cases']} case(s), counts={summary['counts']}")
     print(f"Averages: {summary['averages']}")
     print(f"Blocked-correctness: {summary['blocked_correctness']}")
+    if summary["scoring_errors"]:
+        print(f"Warning: {summary['scoring_errors']} case(s) could not be scored - see scoring_error in cases.jsonl")
     print(f"Results written to {args.run_dir}")
     return 0
 

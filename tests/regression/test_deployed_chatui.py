@@ -86,7 +86,7 @@ class DeployedChatUITests(unittest.TestCase):
 
         source_numbers = {
             int(value)
-            for value in re.findall(r"(?m)^(\d+)\.\s", sources)
+            for value in re.findall(r"(?m)^- \[(\d+)\]\s", sources)
         }
         self.assertTrue(references, "The answer contained no citations")
         self.assertTrue(

@@ -22,7 +22,7 @@ JUDGE_PROVIDER = azure
 JUDGE_MODEL = my-judge-deployment
 JUDGE_MAX_TOKENS = 512
 JUDGE_TEMPERATURE = 0.2
-AZURE_ENDPOINT = https://fake-resource.openai.azure.com/
+AZURE_ENDPOINT = https://fake-resource.openai.azure.com/openai/v1/
 """
 
 
@@ -68,6 +68,17 @@ def test_env_vars_take_precedence_over_config_file(monkeypatch):
 
     assert llm.model == "overridden-deployment"
     assert llm.model_args["temperature"] == 0.7
+
+
+@pytest.mark.parametrize("endpoint", ["DEF", "fake-resource.openai.azure.com/openai/v1/"])
+def test_non_url_azure_endpoint_raises(monkeypatch, endpoint):
+    monkeypatch.setenv("AZURE_API_KEY", "fake-key")
+    monkeypatch.delenv("RAGAS_AZURE_ENDPOINT", raising=False)
+
+    with pytest.raises(ValueError, match="must be an http"):
+        build_judge(_config(AZURE_CONFIG.replace(
+            "https://fake-resource.openai.azure.com/openai/v1/", endpoint
+        )))
 
 
 def test_resolve_judge_model_prefers_env_var(monkeypatch):
