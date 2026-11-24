@@ -78,6 +78,29 @@ def test_summarize_average_is_none_when_no_ok_cases():
     assert all(v is None for v in summary["averages"].values())
 
 
+def test_blocked_correctness_excludes_error_cases():
+    # Every case errored: the guard was never exercised, so this must not read as 1.0.
+    results = [_unscored(1, "error"), _unscored(2, "error")]
+
+    bc = summarize(results)["blocked_correctness"]
+
+    assert bc == {"correct": 0, "total": 0, "excluded_errors": 2, "accuracy": None}
+
+
+def test_blocked_correctness_counts_non_error_cases():
+    results = [
+        _ok(1, 1.0, 1.0, 1.0, 1.0),     # should be answered, answered -> correct
+        _unscored(2, "blocked"),        # should not be answered, blocked -> correct
+        _unscored(3, "no_context"),     # should be answered, not blocked -> correct
+        {**_unscored(4, "ok"), "should_be_answered": False},  # should not be answered, answered -> wrong
+        _unscored(5, "error"),          # excluded
+    ]
+
+    bc = summarize(results)["blocked_correctness"]
+
+    assert bc == {"correct": 3, "total": 4, "excluded_errors": 1, "accuracy": 0.75}
+
+
 def test_write_cases_jsonl_round_trips(tmp_path):
     results = [_ok(1, 1.0, 0.9, 0.8, 0.7), _unscored(2, "no_context")]
     path = tmp_path / "run-1" / "cases.jsonl"
