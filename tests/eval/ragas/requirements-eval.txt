@@ -57,7 +57,7 @@ langchain-text-splitters==0.3.8
 langgraph==1.0.1
 langgraph-checkpoint==3.0.1
 langgraph-prebuilt==1.0.1
-langgraph-sdk==0.2.15
+langgraph-sdk==0.4.6
 langserve==0.3.3
 langsmith==0.10.3
 lxml==6.1.1
