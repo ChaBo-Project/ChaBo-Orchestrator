@@ -75,7 +75,7 @@ collection = your_collection
 [retrieval]
 top_k = 20
 reranker_top_k = 5
-# Set to false to skip reranking.
+# Set to false to skip reranking and keep the first reranker_top_k results in retrieval order.
 reranker_enabled = true
 # Set to true to combine dense and BM25 sparse retrieval.
 hybrid_enabled = false
@@ -99,7 +99,7 @@ MAX_CHARS = 8000
 ```
 
 Put `#` comments on their own lines in `params.cfg` and `params.override.cfg`,
-as shown above. A comment after a setting is read as part of its value.
+as shown above.
 
 If Qdrant is accessed through a Gradio gateway on Hugging Face Spaces, use
 `mode = gradio` and the full `https://` URL:
