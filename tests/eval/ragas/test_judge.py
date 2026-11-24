@@ -14,7 +14,7 @@ import configparser
 
 import pytest
 
-from judge import UnsupportedJudgeProviderError, build_judge
+from judge import UnsupportedJudgeProviderError, build_judge, resolve_judge_model
 
 AZURE_CONFIG = """
 [ragas]
@@ -79,6 +79,14 @@ def test_non_url_azure_endpoint_raises(monkeypatch, endpoint):
         build_judge(_config(AZURE_CONFIG.replace(
             "https://fake-resource.openai.azure.com/openai/v1/", endpoint
         )))
+
+
+def test_resolve_judge_model_prefers_env_var(monkeypatch):
+    monkeypatch.delenv("RAGAS_JUDGE_MODEL", raising=False)
+    assert resolve_judge_model(_config()) == "my-judge-deployment"
+
+    monkeypatch.setenv("RAGAS_JUDGE_MODEL", "overridden-deployment")
+    assert resolve_judge_model(_config()) == "overridden-deployment"
 
 
 def test_missing_azure_api_key_raises(monkeypatch):

@@ -53,6 +53,7 @@ def _patch_pipeline(monkeypatch):
     monkeypatch.setattr(run_eval, "run_testset", fake_run_testset)
     monkeypatch.setattr(run_eval, "getconfig", lambda path: configparser.ConfigParser())
     monkeypatch.setattr(run_eval, "build_judge", lambda config: object())
+    monkeypatch.setattr(run_eval, "resolve_judge_model", lambda config: "judge-x")
     monkeypatch.setattr(run_eval, "build_metrics", lambda judge: {})
     monkeypatch.setattr(run_eval, "score_testset", fake_score_testset)
 
