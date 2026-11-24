@@ -96,6 +96,32 @@ def test_score_testset_only_scores_ok_cases():
     assert len(metrics["faithfulness"].calls) == 1
 
 
+class FailingOnceMetric(FakeMetric):
+    """Raises on the first call only - one bad judge response mid-run."""
+
+    async def ascore(self, **kwargs):
+        if not self.calls:
+            self.calls.append(kwargs)
+            raise RuntimeError("judge returned malformed JSON")
+        return await super().ascore(**kwargs)
+
+
+def test_score_testset_continues_after_one_case_fails():
+    metrics = _fake_metrics()
+    metrics["faithfulness"] = FailingOnceMetric(0.9)
+    results = [
+        {"case_id": 1, "question": "q1", "answer": "a1", "expected_answer": "e1", "chunks": _chunks(), "status": "ok"},
+        {"case_id": 2, "question": "q2", "answer": "a2", "expected_answer": "e2", "chunks": _chunks(), "status": "ok"},
+    ]
+
+    scored = asyncio.run(score_testset(metrics, results))
+
+    assert scored[0]["scores"] is None
+    assert "malformed JSON" in scored[0]["scoring_error"]
+    assert scored[1]["scores"]["faithfulness"] == 0.9
+    assert "scoring_error" not in scored[1]
+
+
 def test_score_testset_does_not_mutate_input():
     metrics = _fake_metrics()
     results = [

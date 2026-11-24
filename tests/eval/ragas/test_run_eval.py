@@ -80,3 +80,51 @@ def test_each_run_gets_its_own_folder_and_summary_json(tmp_path, monkeypatch):
     runs_csv = (tmp_path / "results" / "runs.csv").read_text().splitlines()
     assert len(runs_csv) == 3  # header + one row per run
     assert "run_dir" in runs_csv[0]
+
+
+def _args(tmp_path):
+    testset = tmp_path / "testset.xlsx"
+    testset.write_bytes(b"x")
+    return argparse.Namespace(
+        testset=str(testset), limit=None,
+        out_dir=str(tmp_path / "results"), run_dir=str(tmp_path / "results" / "run-1"),
+    )
+
+
+@pytest.mark.parametrize("error", [ValueError("missing JUDGE_MODEL"), RuntimeError("missing AZURE_API_KEY")])
+def test_judge_config_error_stops_before_any_query(tmp_path, monkeypatch, error):
+    import run_eval
+
+    _patch_pipeline(monkeypatch)
+    queried = []
+
+    async def tracking_run_testset(endpoint, token, cases):
+        queried.append(cases)
+        return []
+
+    def failing_build_judge(config):
+        raise error
+
+    monkeypatch.setattr(run_eval, "run_testset", tracking_run_testset)
+    monkeypatch.setattr(run_eval, "build_judge", failing_build_judge)
+
+    assert asyncio.run(run_eval._score_and_record("http://x", "tok", _args(tmp_path), {"mode": "A"})) == 1
+    assert queried == []  # no endpoint query was spent
+
+
+def test_raw_answers_saved_even_if_scoring_crashes(tmp_path, monkeypatch):
+    import run_eval
+
+    _patch_pipeline(monkeypatch)
+
+    async def crashing_score_testset(metrics, results):
+        raise RuntimeError("judge exploded")
+
+    monkeypatch.setattr(run_eval, "score_testset", crashing_score_testset)
+    args = _args(tmp_path)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(run_eval._score_and_record("http://x", "tok", args, {"mode": "A"}))
+
+    lines = (tmp_path / "results" / "run-1" / "cases.jsonl").read_text().splitlines()
+    assert [json.loads(line)["answer"] for line in lines] == ["a"]

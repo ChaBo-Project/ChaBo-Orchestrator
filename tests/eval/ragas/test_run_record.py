@@ -101,6 +101,18 @@ def test_blocked_correctness_counts_non_error_cases():
     assert bc == {"correct": 3, "total": 4, "excluded_errors": 1, "accuracy": 0.75}
 
 
+def test_summarize_counts_scoring_errors():
+    results = [
+        _ok(1, 1.0, 1.0, 1.0, 1.0),
+        {**_unscored(2, "ok"), "scoring_error": "judge timed out"},
+    ]
+
+    summary = summarize(results)
+
+    assert summary["scoring_errors"] == 1
+    assert summary["averages"]["faithfulness"] == pytest.approx(1.0)  # only the scored case
+
+
 def test_write_cases_jsonl_round_trips(tmp_path):
     results = [_ok(1, 1.0, 0.9, 0.8, 0.7), _unscored(2, "no_context")]
     path = tmp_path / "run-1" / "cases.jsonl"
