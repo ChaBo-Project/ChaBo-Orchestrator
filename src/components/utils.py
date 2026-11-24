@@ -107,7 +107,7 @@ def getconfig(configfile_path: str) -> configparser.ConfigParser:
     (INSTANCE_CONFIG_DIR/params.override.cfg) on top if present — later file wins
     per [section][key]. Every caller of getconfig() gets this for free.
     """
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(inline_comment_prefixes=("#",))
     paths = [configfile_path]
     override = params_override_path()
     if override:

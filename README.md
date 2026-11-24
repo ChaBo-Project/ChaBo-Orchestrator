@@ -99,7 +99,8 @@ MAX_CHARS = 8000
 ```
 
 Put `#` comments on their own lines in `params.cfg` and `params.override.cfg`,
-as shown above.
+as shown above. A `#` that follows a space starts a comment, so
+`key = value  # note` is read as `value`.
 
 If Qdrant is accessed through a Gradio gateway on Hugging Face Spaces, use
 `mode = gradio` and the full `https://` URL:
@@ -111,7 +112,8 @@ url = https://your-org-your-space.hf.space
 collection = your_collection
 ```
 
-A bare hostname can be interpreted as a Hugging Face Space ID and return a 404.
+A bare hostname is rejected at startup: `gradio_client` would read it as a
+Hugging Face Space ID and fail with a 404.
 
 Hosted chat can opt into `PROVIDER = huggingface_router` using `HF_TOKEN`.
 This uses `https://router.huggingface.co/v1` and avoids the installed Hub SDK's
