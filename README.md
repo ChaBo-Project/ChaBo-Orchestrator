@@ -645,7 +645,7 @@ JUDGE_MAX_TOKENS = 1024
 JUDGE_TEMPERATURE = 0.1
 
 # Azure OpenAI endpoint of the judge deployment
-AZURE_ENDPOINT = https://your-resource.openai.azure.com/
+AZURE_ENDPOINT = https://your-resource.openai.azure.com/openai/v1/
 ```
 
 Set the judge's API key as the environment variable `AZURE_API_KEY`. RAGAS metrics rely on the judge model's reasoning ability — use a capable model for reliable scores.

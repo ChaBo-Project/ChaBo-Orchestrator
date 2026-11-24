@@ -48,7 +48,14 @@ def build_judge(config) -> Any:
     temperature = float(
         get_config_value(config, "ragas", "JUDGE_TEMPERATURE", "RAGAS_JUDGE_TEMPERATURE", fallback=0.1)
     )
-    azure_endpoint = get_config_value(config, "ragas", "AZURE_ENDPOINT", "RAGAS_AZURE_ENDPOINT")
+    azure_endpoint = get_config_value(config, "ragas", "AZURE_ENDPOINT", "RAGAS_AZURE_ENDPOINT").strip()
+    # Same rule as ChaBo's own azure LLMClient: without a real URL, the OpenAI SDK would
+    # fall back to api.openai.com and send the Azure key there.
+    if not azure_endpoint.startswith(("https://", "http://")):
+        raise ValueError(
+            f"[ragas] AZURE_ENDPOINT (or env RAGAS_AZURE_ENDPOINT) must be an http(s) URL, "
+            f"e.g. https://<resource>.openai.azure.com/openai/v1/ - got {azure_endpoint!r}."
+        )
     api_key = get_auth_for_generator("azure")["api_key"]
 
     from openai import AsyncOpenAI
