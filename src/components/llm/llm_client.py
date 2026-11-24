@@ -16,6 +16,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_cohere import ChatCohere
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_core.language_models import BaseChatModel  # for typing
+from .rate_limit import log_provider_rate_limit, retry_after_seconds
 
 from ..utils import get_auth_for_generator
 
@@ -167,12 +168,26 @@ class LLMClient:
 
     # --- Inference calls -----------------------------------------------------
 
+
     async def ainvoke(self, messages: list) -> str:
         """Provider-agnostic LLM call using LangChain (non-streaming)."""
         llm_started = time.perf_counter()
         try:
             logger.debug("Calling LLM without streaming")
-            response = await self.chat_model.ainvoke(messages)
+            try:
+                response = await self.chat_model.ainvoke(messages)
+            except Exception as error:
+                delay = retry_after_seconds(error)
+                if delay is None:
+                    raise
+                log_provider_rate_limit(self.task, error)
+                logger.info(
+                    "Retrying one rate-limited LLM call after %s seconds",
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                response = await self.chat_model.ainvoke(messages)
+
             answer = response.content.strip()
             logger.info(
                 "LLM call completed: task=%s streaming=False duration_s=%.3f "
@@ -186,6 +201,7 @@ class LLMClient:
             )
             return answer
         except Exception as e:
+            log_provider_rate_limit(self.task, e)
             logger.exception(
                 "LLM call failed: task=%s streaming=False duration_s=%.3f "
                 "provider=%s inference_provider=%s model=%s "
@@ -213,12 +229,28 @@ class LLMClient:
         first_chunk_s = "-"
         try:
             logger.debug("Calling LLM with streaming")
-            async for chunk in self.chat_model.astream(messages):
-                if hasattr(chunk, "content") and chunk.content:
-                    if output_chars == 0:
-                        first_chunk_s = "%.3f" % (time.perf_counter() - llm_started)
-                    output_chars += len(chunk.content)
-                    yield chunk.content
+            for attempt in range(2):
+                try:
+                    async for chunk in self.chat_model.astream(messages):
+                        if hasattr(chunk, "content") and chunk.content:
+                            if output_chars == 0:
+                                first_chunk_s = "%.3f" % (
+                                    time.perf_counter() - llm_started
+                                )
+                            output_chars += len(chunk.content)
+                            yield chunk.content
+                except Exception as error:
+                    delay = retry_after_seconds(error)
+                    if attempt != 0 or output_chars > 0 or delay is None:
+                        raise
+                    log_provider_rate_limit(self.task, error)
+                    logger.info(
+                        "Retrying one rate-limited streaming call after %s seconds",
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    break
 
             logger.info(
                 "LLM call completed: task=%s streaming=True duration_s=%.3f "

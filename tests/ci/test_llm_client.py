@@ -9,9 +9,12 @@ Covers:
 """
 
 import configparser
-
 import pytest
+import asyncio
+from types import SimpleNamespace
 
+from aiohttp import ClientResponseError
+from multidict import CIMultiDict
 from components.llm import LLMClient, build_llm_client
 
 
@@ -90,3 +93,79 @@ def test_invalid_chat_template_kwargs_fail_fast_naming_the_key(monkeypatch, valu
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     with pytest.raises(ValueError, match=r"\[query_rewriter\] llm_chat_template_kwargs .*JSON object"):
         build_llm_client(_rewrite_config(llm_chat_template_kwargs=value), "query_rewrite")
+
+def _stream_test_client(chat_model):
+    client = object.__new__(LLMClient)
+    client.chat_model = chat_model
+    client.task = "generation"
+    client.provider = "huggingface"
+    client.inference_provider = "novita"
+    client.model = "test-model"
+    return client
+
+
+def _rate_limit_error():
+    return ClientResponseError(
+        SimpleNamespace(real_url="https://example.invalid"),
+        (),
+        status=429,
+        headers=CIMultiDict({"Retry-After": "0"}),
+    )
+
+
+def test_stream_retries_429_once_before_first_chunk(monkeypatch):
+    delays = []
+
+    async def no_wait(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr("components.llm.llm_client.asyncio.sleep", no_wait)
+
+    class FlakyChatModel:
+        calls = 0
+
+        async def astream(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                raise _rate_limit_error()
+            yield SimpleNamespace(content="OK")
+
+    chat_model = FlakyChatModel()
+    client = _stream_test_client(chat_model)
+
+    async def collect():
+        return [chunk async for chunk in client.astream([])]
+
+    assert asyncio.run(collect()) == ["OK"]
+    assert chat_model.calls == 2
+    assert delays == [0]
+
+
+def test_stream_does_not_retry_429_after_first_chunk(monkeypatch):
+    delays = []
+
+    async def no_wait(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr("components.llm.llm_client.asyncio.sleep", no_wait)
+
+    class ChatModelFailsAfterText:
+        calls = 0
+
+        async def astream(self, messages):
+            self.calls += 1
+            yield SimpleNamespace(content="partial")
+            raise _rate_limit_error()
+
+    chat_model = ChatModelFailsAfterText()
+    client = _stream_test_client(chat_model)
+
+    async def check_stream():
+        stream = client.astream([])
+        assert await anext(stream) == "partial"
+        with pytest.raises(ClientResponseError):
+            await anext(stream)
+
+    asyncio.run(check_stream())
+    assert chat_model.calls == 1
+    assert delays == []
