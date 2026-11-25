@@ -12,7 +12,7 @@ contract on some orchestrator base URL:
         --testset path/to/testset.xlsx --override path/to/override.cfg [--host-port 18860]
 
 Judge settings are read from eval.cfg next to this script (RAGAS_* env vars override it).
-Run from the repo root: the chabo_commit lookup (git) uses the current directory.
+Self-contained: imports nothing from the orchestrator's src/, so it can run from any folder.
 
 If --eval-token is omitted, EVAL_API_KEY is read from the environment (Mode A) or generated
 implicitly by reusing that same value as the temp container's own EVAL_API_KEY (Mode B).
@@ -30,20 +30,15 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-# Add src/ to path so imports match how main.py resolves them (needed by judge.py's own
-# import of components.utils, and so this script could do the same if it ever needs to).
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src")))
-
-from components.utils import getconfig  # noqa: E402  (after sys.path setup, same pattern as judge.py)
-
-from config_render import apply_override, render_config  # noqa: E402
-from container_runner import temp_container  # noqa: E402
-from judge import build_judge, resolve_judge_model, UnsupportedJudgeProviderError  # noqa: E402
-from run_record import (  # noqa: E402
+from config_render import apply_override, render_config
+from container_runner import temp_container
+from eval_config import load_config
+from judge import build_judge, resolve_judge_model, UnsupportedJudgeProviderError
+from run_record import (
     append_runs_csv, build_manifest, summarize, test_set_hash, write_cases_csv, write_cases_jsonl,
 )
-from scoring import build_metrics, score_testset  # noqa: E402
-from testset import load_testset  # noqa: E402
+from scoring import build_metrics, score_testset
+from testset import load_testset
 
 DEFAULT_OUT_DIR = os.path.join(os.path.dirname(__file__), "results")
 EVAL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval.cfg")
@@ -65,6 +60,7 @@ def _git_commit() -> Optional[str]:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, timeout=5, check=True,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
         )
         return result.stdout.strip()
     except Exception:
@@ -161,7 +157,7 @@ async def _score_and_record(
 
     # Build the judge before running any case: a judge config error (missing key, endpoint,
     # or model) must stop the run before it spends on endpoint queries.
-    config = getconfig(EVAL_CONFIG_PATH)
+    config = load_config(EVAL_CONFIG_PATH)
     try:
         judge = build_judge(config)
     except (UnsupportedJudgeProviderError, ValueError, RuntimeError) as exc:

@@ -9,14 +9,9 @@ structured-output client instead). Deliberately independent of ChaBo's own LLMCl
 [generator]: judging with the same model that generated the answer risks self-preference
 bias, so this never reuses build_llm_client().
 """
-import os
-import sys
 from typing import Any
 
-# Add src/ to path so imports match how main.py resolves them
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src")))
-
-from components.utils import get_auth_for_generator, get_config_value
+from eval_config import get_api_key, get_config_value
 
 
 class UnsupportedJudgeProviderError(ValueError):
@@ -32,7 +27,7 @@ def build_judge(config) -> Any:
     """
     Build the RAGAS judge LLM from the [ragas] section of eval.cfg. Environment variables
     take precedence over the file (RAGAS_JUDGE_PROVIDER, RAGAS_JUDGE_MODEL, etc.) - same
-    precedence convention as the rest of ChaBo's config, via get_config_value().
+    precedence convention as the rest of ChaBo's config.
 
     v1 only supports JUDGE_PROVIDER = azure (huggingface is deferred - see the eval plan's
     Open items, it needs a structured-output spike first since smaller open models are less
@@ -61,7 +56,7 @@ def build_judge(config) -> Any:
             f"[ragas] AZURE_ENDPOINT (or env RAGAS_AZURE_ENDPOINT) must be an http(s) URL, "
             f"e.g. https://<resource>.openai.azure.com/openai/v1/ - got {azure_endpoint!r}."
         )
-    api_key = get_auth_for_generator("azure")["api_key"]
+    api_key = get_api_key("AZURE_API_KEY")
 
     from openai import AsyncOpenAI
     from ragas.llms import llm_factory

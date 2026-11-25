@@ -640,7 +640,7 @@ The Orchestrator must expose `/eval-query`, which is only enabled when `EVAL_API
 python tests/eval/ragas/run_eval.py --endpoint http://localhost:7860 --testset path/to/questions.xlsx --limit 2
 ```
 
-- Run it from the repo root; the script uses repo-relative imports.
+- The CLI is self-contained (it imports nothing from `src/`), so it can run from any folder.
 - `--endpoint` uses an already-running Orchestrator; `--instance-repo` starts a temporary container from a local instance repo instead.
 - `--limit N` runs only the first N cases (cheap dry run).
 - Output: a UTC-timestamped folder per run under `tests/eval/ragas/results/` (gitignored, override with `--out-dir`), containing the per-case results and `summary.json`. A row is appended to `runs.csv` in the same base folder for each run.

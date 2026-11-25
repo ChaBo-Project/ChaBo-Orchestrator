@@ -5,12 +5,7 @@ plan): faithfulness, context recall, context precision, factual correctness.
 Only "ok" cases are scored - a failed/blocked/no-context case is never averaged in as if it
 were a real answer (see the status taxonomy in main.py's eval_query).
 """
-import os
-import sys
 from typing import Any, Dict, List
-
-# Add src/ to path so imports match how main.py resolves them
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src")))
 
 METRIC_NAMES = ("faithfulness", "context_recall", "context_precision", "factual_correctness")
 
