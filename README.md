@@ -646,23 +646,15 @@ python tests/eval/ragas/run_eval.py --endpoint http://localhost:7860 --testset p
 - Output: a UTC-timestamped folder per run under `tests/eval/ragas/results/` (gitignored, override with `--out-dir`), containing the per-case results and `summary.json`. A row is appended to `runs.csv` in the same base folder for each run.
 - A rejected token (401/404) stops the run before any judging cost.
 
-The judge LLM is configured in `params.cfg`'s `[ragas]` section — independent of the `[generator]` section, to avoid self-preference bias in scoring. Only Azure is supported in v1:
+The judge LLM is configured in `tests/eval/ragas/eval.cfg` (`[ragas]` section). It is eval-only, so it lives next to the CLI and never ships in the image, and it is independent of `[generator]` to avoid self-preference bias in scoring. Every key can be overridden by an env var `RAGAS_<KEY>` (e.g. `RAGAS_JUDGE_MODEL`). Only Azure is supported in v1:
 
 ```ini
 [ragas]
-# LLM used by the RAGAS eval CLI (tests/eval/ragas/run_eval.py) to judge/score
-# metrics (faithfulness, context recall, context precision, factual correctness).
-# Eval-only — never read by the running application; kept here purely so all runtime
-# config lives in one documented place (see CLAUDE.md).
-# Deliberately independent of [generator]: judging with the same model that generated
-# the answer risks self-preference bias in RAGAS-style scoring.
-# Supported providers: azure (v1)
 JUDGE_PROVIDER = azure
 # The Azure deployment name of the judge model
 JUDGE_MODEL = your-deployment-name
 JUDGE_MAX_TOKENS = 1024
 JUDGE_TEMPERATURE = 0.1
-
 # Azure OpenAI endpoint of the judge deployment
 AZURE_ENDPOINT = https://your-resource.openai.azure.com/openai/v1/
 ```

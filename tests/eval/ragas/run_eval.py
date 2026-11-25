@@ -11,8 +11,8 @@ contract on some orchestrator base URL:
     python tests/eval/ragas/run_eval.py --instance-repo path/to/instance-checkout \
         --testset path/to/testset.xlsx --override path/to/override.cfg [--host-port 18860]
 
-Run all commands from the repo root: params.cfg (judge settings) and the chabo_commit lookup
-(git) are both resolved relative to the current directory.
+Judge settings are read from eval.cfg next to this script (RAGAS_* env vars override it).
+Run from the repo root: the chabo_commit lookup (git) uses the current directory.
 
 If --eval-token is omitted, EVAL_API_KEY is read from the environment (Mode A) or generated
 implicitly by reusing that same value as the temp container's own EVAL_API_KEY (Mode B).
@@ -46,6 +46,7 @@ from scoring import build_metrics, score_testset  # noqa: E402
 from testset import load_testset  # noqa: E402
 
 DEFAULT_OUT_DIR = os.path.join(os.path.dirname(__file__), "results")
+EVAL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval.cfg")
 DEFAULT_HOST_PORT = 18860
 
 # Forwarded to a Mode B temp container if set in this process's own environment - the user
@@ -160,7 +161,7 @@ async def _score_and_record(
 
     # Build the judge before running any case: a judge config error (missing key, endpoint,
     # or model) must stop the run before it spends on endpoint queries.
-    config = getconfig("params.cfg")
+    config = getconfig(EVAL_CONFIG_PATH)
     try:
         judge = build_judge(config)
     except (UnsupportedJudgeProviderError, ValueError, RuntimeError) as exc:

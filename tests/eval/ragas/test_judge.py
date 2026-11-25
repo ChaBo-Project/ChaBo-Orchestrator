@@ -7,7 +7,7 @@ API call, so these tests can run against a fake API key and a fake endpoint URL.
 Covers:
 - a non-azure JUDGE_PROVIDER is rejected (v1 only supports azure)
 - a well-formed azure config builds successfully
-- RAGAS_* environment variables take precedence over params.cfg, same as the rest of ChaBo
+- RAGAS_* environment variables take precedence over eval.cfg, same as the rest of ChaBo
 - a missing AZURE_API_KEY env var fails loudly rather than silently
 """
 import configparser
@@ -94,3 +94,12 @@ def test_missing_azure_api_key_raises(monkeypatch):
 
     with pytest.raises(RuntimeError):
         build_judge(_config())
+
+
+def test_eval_cfg_next_to_cli_has_judge_settings():
+    from run_eval import EVAL_CONFIG_PATH
+
+    config = configparser.ConfigParser(inline_comment_prefixes=("#",))
+    assert config.read(EVAL_CONFIG_PATH) == [EVAL_CONFIG_PATH]
+    for key in ("JUDGE_PROVIDER", "JUDGE_MODEL", "AZURE_ENDPOINT"):
+        assert config.get("ragas", key)

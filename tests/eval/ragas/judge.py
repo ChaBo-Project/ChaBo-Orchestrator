@@ -30,7 +30,7 @@ def resolve_judge_model(config) -> str:
 
 def build_judge(config) -> Any:
     """
-    Build the RAGAS judge LLM from the [ragas] section of params.cfg. Environment variables
+    Build the RAGAS judge LLM from the [ragas] section of eval.cfg. Environment variables
     take precedence over the file (RAGAS_JUDGE_PROVIDER, RAGAS_JUDGE_MODEL, etc.) - same
     precedence convention as the rest of ChaBo's config, via get_config_value().
 
