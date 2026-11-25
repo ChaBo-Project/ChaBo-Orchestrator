@@ -16,6 +16,7 @@ records for now rather than filled with placeholders.
 import csv
 import hashlib
 import json
+import math
 import os
 from collections import Counter
 from typing import Any, Dict, List
@@ -47,7 +48,12 @@ def summarize(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     averages: Dict[str, Any] = {}
     for metric in METRIC_NAMES:
-        values = [r["scores"][metric] for r in ok_results if r.get("scores")]
+        # Skip missing and non-finite scores: one NaN would make the average NaN.
+        values = [
+            v for r in ok_results if r.get("scores")
+            for v in [r["scores"].get(metric)]
+            if isinstance(v, (int, float)) and math.isfinite(v)
+        ]
         averages[metric] = (sum(values) / len(values)) if values else None
 
     answer_lengths = [len(r["answer"]) for r in ok_results if r.get("answer")]
