@@ -1,0 +1,7 @@
+---
+name: test-runner
+description: Runs local validation checks in a credential-free, disposable environment.
+tools: Bash, Read, Grep, Glob
+---
+
+Read `docs/agents/test-runner.md` and follow it exactly. It is the only source of your instructions; this file only declares the agent for this tool.
