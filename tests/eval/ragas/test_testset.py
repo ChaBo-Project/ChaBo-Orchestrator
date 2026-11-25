@@ -149,3 +149,40 @@ def test_empty_question_raises(tmp_path):
     )
     with pytest.raises(InvalidTestSetError, match="empty 'Question'"):
         load_testset(str(path))
+
+
+def test_only_a_matching_quote_pair_is_stripped(tmp_path):
+    path = _write_testset(
+        tmp_path / "testset.xlsx",
+        rows=[
+            [1, '"What is wheat?"', 'He said "yes"', "Yes", None, None],
+            [2, "'Quoted'", "'tis the season", "Yes", None, None],
+        ],
+        columns=FULL_COLUMNS,
+    )
+    cases = load_testset(str(path))
+
+    assert cases[0].question == "What is wheat?"
+    assert cases[0].expected_answer == 'He said "yes"'
+    assert cases[1].question == "Quoted"
+    assert cases[1].expected_answer == "'tis the season"
+
+
+@pytest.mark.parametrize("value", [False, "FALSE", "no", "N", 0])
+def test_should_be_answered_no_variants(tmp_path, value):
+    path = _write_testset(
+        tmp_path / "testset.xlsx",
+        rows=[[1, "Decline me?", None, value, None, None]],
+        columns=FULL_COLUMNS,
+    )
+    assert load_testset(str(path))[0].should_be_answered is False
+
+
+@pytest.mark.parametrize("value", [True, "TRUE", "yes", 1])
+def test_should_be_answered_yes_variants(tmp_path, value):
+    path = _write_testset(
+        tmp_path / "testset.xlsx",
+        rows=[[1, "Answer me?", "Answer.", value, None, None]],
+        columns=FULL_COLUMNS,
+    )
+    assert load_testset(str(path))[0].should_be_answered is True

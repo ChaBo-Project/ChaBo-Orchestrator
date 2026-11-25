@@ -28,13 +28,26 @@ class TestCase:
     notes: Optional[str]
 
 
+NO_VALUES = {"no", "n", "false", "0"}
+
+
 def _clean_cell(value: object) -> Optional[str]:
-    """Strip surrounding quotes/whitespace and collapse line breaks; blank/NaN -> None."""
+    """Strip whitespace and one matching pair of surrounding quotes, collapse line breaks;
+    blank/NaN -> None. A quote on one side only is kept (it is part of the text)."""
     if pd.isna(value):
         return None
-    text = str(value).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    text = text.strip().strip("\"'").strip()
+    text = str(value).replace("\r\n", " ").replace("\n", " ").replace("\r", " ").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
     return text or None
+
+
+def _should_be_answered(value: object) -> bool:
+    """Blank means yes. No/N/False/0 - typed, or an Excel boolean FALSE - means no."""
+    if isinstance(value, bool):
+        return value
+    text = _clean_cell(value)
+    return text is None or text.lower() not in NO_VALUES
 
 
 def load_testset(path: str) -> List[TestCase]:
@@ -88,10 +101,9 @@ def load_testset(path: str) -> List[TestCase]:
                 f"{path}: row {excel_row} (case #{case_id}) has an empty 'Question'"
             )
 
-        should_be_answered_raw = (
-            _clean_cell(row[should_be_answered_col]) if should_be_answered_col else None
+        should_be_answered = (
+            _should_be_answered(row[should_be_answered_col]) if should_be_answered_col else True
         )
-        should_be_answered = (should_be_answered_raw or "yes").lower() != "no"
 
         expected_answer = _clean_cell(row[expected_answer_col])
         if should_be_answered and not expected_answer:
