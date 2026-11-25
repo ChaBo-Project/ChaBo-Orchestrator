@@ -7,7 +7,7 @@ automatically: a developer invokes an agent from their own AI coding tool.
 |---|---|---|
 | [change-reviewer](change-reviewer.md) | Reviews a change for bugs, missing tests, secrets and docs/repo follow-ups | read-only |
 | [security-auditor](security-auditor.md) | Audits the repo for secrets, internal info, unsafe routes and dependency risks | read-only |
-| [test-runner](test-runner.md) | Runs the CI checks in a credential-free environment | runs commands, no edits |
+| [test-runner](test-runner.md) | Runs local validation checks in a credential-free, disposable environment | runs commands, no edits |
 
 ## Layout
 

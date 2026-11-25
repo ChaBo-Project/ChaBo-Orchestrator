@@ -1,6 +1,6 @@
 ---
 name: test-runner
-description: Runs the CI checks (ruff, compileall, pytest, Docker build) only in a credential-free, disposable environment.
+description: Runs local validation checks in a credential-free, disposable environment.
 tools: Bash, Read, Grep, Glob
 ---
 
