@@ -19,6 +19,14 @@ ENV FASTEMBED_CACHE_PATH=/opt/fastembed_cache
 RUN python -c "from fastembed import SparseTextEmbedding; SparseTextEmbedding('Qdrant/bm25')" && \
     chmod -R a+rwX /opt/fastembed_cache
 
+# ---------- Version metadata ----------
+# Set by the release workflow (release version + git commit); any other build reports
+# "dev"/"unknown" so it never pretends to be a release. Reported by /health and /eval-query.
+ARG CHABO_VERSION=dev
+ARG CHABO_COMMIT=unknown
+ENV CHABO_VERSION=${CHABO_VERSION} \
+    CHABO_COMMIT=${CHABO_COMMIT}
+
 # ---------- Copy Project Files ----------
 # Set appropriate ownership and permissions
 COPY --link --chown=1000 . .
