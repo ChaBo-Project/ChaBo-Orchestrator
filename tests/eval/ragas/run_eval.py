@@ -218,7 +218,8 @@ async def _score_and_record(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "endpoint": endpoint,
         "chabo_commit": _git_commit(),
-        "testset_path": args.testset,
+        # File names only: results get shared, and absolute paths expose the local machine.
+        "testset_path": os.path.basename(args.testset),
         "testset_hash": test_set_hash(args.testset),
         "judge_model": resolve_judge_model(config),
         "num_cases": len(scored),
@@ -264,9 +265,9 @@ async def _run_mode_b(args: argparse.Namespace, token: str) -> int:
             return await _score_and_record(endpoint, token, args, {
                 "mode": "B",
                 "chabo_tag": chabo_tag,
-                "override_path": args.override,
+                "override_path": os.path.basename(args.override) if args.override else None,
                 "swept_fields": swept,
-                "rendered_config_copy": rendered_copy_path,
+                "rendered_config_copy": os.path.basename(rendered_copy_path),  # inside the run folder
             })
     finally:
         # rendered_dir is a disposable temp directory (see config_render.render_config's

@@ -209,3 +209,17 @@ def test_mode_b_errors_print_a_message_not_a_traceback(tmp_path, monkeypatch, ca
 
     assert asyncio.run(run_eval.main_async(_mode_b_args(tmp_path))) == 1
     assert "Mode B failed: validate-config.py failed" in capsys.readouterr().out
+
+
+def test_manifest_and_runs_csv_hold_no_absolute_paths(tmp_path, monkeypatch):
+    import run_eval
+
+    _patch_pipeline(monkeypatch)
+    args = _args(tmp_path)
+    assert asyncio.run(run_eval._score_and_record("http://x", "tok", args, {"mode": "A"})) == 0
+
+    manifest = (tmp_path / "results" / "run-1" / "manifest.json").read_text()
+    runs_csv = (tmp_path / "results" / "runs.csv").read_text()
+    assert json.loads(manifest)["testset_path"] == "testset.xlsx"
+    assert str(tmp_path) not in manifest
+    assert str(tmp_path) not in runs_csv
