@@ -1,26 +1,94 @@
 """
 Builds the RAGAS judge LLM used to score eval cases (Step 3 - Scoring - of the RAGAS eval
-plan). v1 supports JUDGE_PROVIDER = azure only.
+plan).
+
+Supported JUDGE_PROVIDER values - all speak the OpenAI chat API, so one AsyncOpenAI client
+covers them, pointed at the right base URL with the right key:
+  azure               AZURE_ENDPOINT (…/openai/v1/), key AZURE_API_KEY
+  openai              api.openai.com, key OPENAI_API_KEY
+  huggingface_router  router.huggingface.co/v1, key HF_TOKEN; optional INFERENCE_PROVIDER and
+                      ORGANIZATION, same meaning as in the generator's [generator] section
+  openai_compatible   any OpenAI-compatible server (vLLM, TGI, ...): BASE_URL, key in the env
+                      var named by API_KEY_ENV (default RAGAS_JUDGE_API_KEY)
 
 Built directly from the provider's own SDK client via RAGAS's llm_factory, not a LangChain
-wrapper - this is the one substantial part of the RAGAS 0.4 migration (the old eval.py wraps
-ChaBo's own LLMClient in ragas.llms.LangchainLLMWrapper; the new metrics need a
-structured-output client instead). Deliberately independent of ChaBo's own LLMClient /
-[generator]: judging with the same model that generated the answer risks self-preference
-bias, so this never reuses build_llm_client().
+wrapper - the RAGAS 0.4 metrics need a structured-output client. Deliberately independent of
+ChaBo's own LLMClient / [generator]: judging with the same model that generated the answer
+risks self-preference bias, so this never reuses build_llm_client().
+
+RAGAS metrics ask the judge for strict structured (JSON) output. Large models handle this
+well; small open models, or inference providers without tool-call / JSON support, may fail -
+those cases show up as scoring_error, so try a new judge with --limit 2 first.
 """
-from typing import Any
+from typing import Any, Dict, Optional
 
 from eval_config import get_api_key, get_config_value
 
+HF_ROUTER_BASE_URL = "https://router.huggingface.co/v1"
+SUPPORTED_PROVIDERS = ("azure", "openai", "huggingface_router", "openai_compatible")
+
 
 class UnsupportedJudgeProviderError(ValueError):
-    """Raised when [ragas] JUDGE_PROVIDER isn't a provider v1 supports."""
+    """Raised when [ragas] JUDGE_PROVIDER isn't a supported provider."""
+
+
+def _value(config, key: str, fallback: Any = None) -> Any:
+    """[ragas] <key>, overridable by the env var RAGAS_<key>."""
+    return get_config_value(config, "ragas", key, f"RAGAS_{key}", fallback=fallback)
+
+
+def _optional(config, key: str) -> str:
+    return str(_value(config, key, fallback="")).strip()
+
+
+def _require_url(config, key: str) -> str:
+    url = _optional(config, key)
+    # Without a real URL, the OpenAI SDK would fall back to api.openai.com and send the
+    # provider's key there.
+    if not url.startswith(("https://", "http://")):
+        raise ValueError(
+            f"[ragas] {key} (or env RAGAS_{key}) must be an http(s) URL - got {url!r}."
+        )
+    return url
 
 
 def resolve_judge_model(config) -> str:
-    """The judge model actually used: RAGAS_JUDGE_MODEL env var, else [ragas] JUDGE_MODEL."""
-    return get_config_value(config, "ragas", "JUDGE_MODEL", "RAGAS_JUDGE_MODEL").strip()
+    """The judge model actually used: RAGAS_JUDGE_MODEL env var, else [ragas] JUDGE_MODEL.
+    For huggingface_router with INFERENCE_PROVIDER set, ':<provider>' is appended, exactly
+    as the generator does."""
+    model = str(_value(config, "JUDGE_MODEL")).strip()
+    provider = _optional(config, "JUDGE_PROVIDER").lower()
+    inference_provider = _optional(config, "INFERENCE_PROVIDER")
+    if (
+        provider == "huggingface_router"
+        and inference_provider
+        and inference_provider != "auto"
+        and ":" not in model
+    ):
+        model = f"{model}:{inference_provider}"
+    return model
+
+
+def _client_settings(config, provider: str) -> Dict[str, Any]:
+    """base_url, api_key and extra headers for the judge's OpenAI-compatible client."""
+    headers: Dict[str, str] = {}
+    base_url: Optional[str]
+    if provider == "azure":
+        base_url = _require_url(config, "AZURE_ENDPOINT")
+        api_key = get_api_key("AZURE_API_KEY")
+    elif provider == "openai":
+        base_url = None  # the SDK's default, api.openai.com
+        api_key = get_api_key("OPENAI_API_KEY")
+    elif provider == "huggingface_router":
+        base_url = HF_ROUTER_BASE_URL
+        api_key = get_api_key("HF_TOKEN")
+        organization = _optional(config, "ORGANIZATION")
+        if organization:
+            headers["X-HF-Bill-To"] = organization
+    else:  # openai_compatible
+        base_url = _require_url(config, "BASE_URL")
+        api_key = get_api_key(_optional(config, "API_KEY_ENV") or "RAGAS_JUDGE_API_KEY")
+    return {"base_url": base_url, "api_key": api_key, "default_headers": headers or None}
 
 
 def build_judge(config) -> Any:
@@ -28,54 +96,30 @@ def build_judge(config) -> Any:
     Build the RAGAS judge LLM from the [ragas] section of eval.cfg. Environment variables
     take precedence over the file (RAGAS_JUDGE_PROVIDER, RAGAS_JUDGE_MODEL, etc.) - same
     precedence convention as the rest of ChaBo's config.
-
-    v1 only supports JUDGE_PROVIDER = azure (huggingface is deferred - see the eval plan's
-    Open items, it needs a structured-output spike first since smaller open models are less
-    reliable at strict JSON output).
     """
-    provider = get_config_value(config, "ragas", "JUDGE_PROVIDER", "RAGAS_JUDGE_PROVIDER").strip().lower()
-
-    if provider != "azure":
+    provider = _optional(config, "JUDGE_PROVIDER").lower()
+    if provider not in SUPPORTED_PROVIDERS:
         raise UnsupportedJudgeProviderError(
-            f"[ragas] JUDGE_PROVIDER={provider!r} is not supported yet - v1 only supports "
-            "'azure'."
+            f"[ragas] JUDGE_PROVIDER={provider!r} is not supported - use one of "
+            f"{', '.join(SUPPORTED_PROVIDERS)}."
         )
 
     model = resolve_judge_model(config)
-    max_tokens = int(
-        get_config_value(config, "ragas", "JUDGE_MAX_TOKENS", "RAGAS_JUDGE_MAX_TOKENS", fallback=1024)
-    )
-    temperature = float(
-        get_config_value(config, "ragas", "JUDGE_TEMPERATURE", "RAGAS_JUDGE_TEMPERATURE", fallback=0.1)
-    )
-    azure_endpoint = get_config_value(config, "ragas", "AZURE_ENDPOINT", "RAGAS_AZURE_ENDPOINT").strip()
-    # Same rule as ChaBo's own azure LLMClient: without a real URL, the OpenAI SDK would
-    # fall back to api.openai.com and send the Azure key there.
-    if not azure_endpoint.startswith(("https://", "http://")):
-        raise ValueError(
-            f"[ragas] AZURE_ENDPOINT (or env RAGAS_AZURE_ENDPOINT) must be an http(s) URL, "
-            f"e.g. https://<resource>.openai.azure.com/openai/v1/ - got {azure_endpoint!r}."
-        )
-    api_key = get_api_key("AZURE_API_KEY")
+    max_tokens = int(_value(config, "JUDGE_MAX_TOKENS", fallback=1024))
+    temperature = float(_value(config, "JUDGE_TEMPERATURE", fallback=0.1))
+    settings = _client_settings(config, provider)
 
     from openai import AsyncOpenAI
     from ragas.llms import llm_factory
 
-    # Async client, pointed at the Azure endpoint's base_url the same way ChaBo's own
-    # LLMClient does for provider="azure" (src/components/llm/llm_client.py) - Azure OpenAI
-    # deployments are OpenAI-API-compatible, so no separate Azure SDK class or api_version is
-    # needed. Must be the async client specifically: scoring.py calls RAGAS metrics' .ascore()
+    # Must be the async client specifically: scoring.py calls RAGAS metrics' .ascore()
     # (async), and RAGAS's async path raises TypeError if the underlying client is sync-only
-    # (confirmed via a real test run - a plain sync OpenAI client here fails at the first
-    # metric score with "Cannot use agenerate() with a synchronous client").
-    client = AsyncOpenAI(api_key=api_key, base_url=azure_endpoint)
+    # ("Cannot use agenerate() with a synchronous client").
+    client = AsyncOpenAI(**settings)
 
-    # ragas==0.4.3's llm_factory has a real bug with provider="azure": azure isn't one of
-    # its explicitly-handled providers, so it falls through to a generic fallback path that
-    # hardcodes Anthropic's client.messages.create shape - which an OpenAI-compatible client
-    # doesn't have, and crashes with AttributeError. Passing provider="openai" instead routes
-    # through llm_factory's correctly-working OpenAI path; safe here because the client above
-    # already only ever speaks the OpenAI API shape.
+    # provider="openai" for every judge provider: they all speak the OpenAI API shape, and
+    # ragas==0.4.3's llm_factory mishandles provider="azure" (falls through to a generic path
+    # that calls Anthropic's client.messages.create and crashes with AttributeError).
     return llm_factory(
         model,
         provider="openai",

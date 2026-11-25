@@ -5,7 +5,8 @@ llm_factory only builds client/wrapper objects at construction time; it doesn't 
 API call, so these tests can run against a fake API key and a fake endpoint URL.
 
 Covers:
-- a non-azure JUDGE_PROVIDER is rejected (v1 only supports azure)
+- an unknown JUDGE_PROVIDER is rejected
+- openai, huggingface_router and openai_compatible judges get the right URL, key and model
 - a well-formed azure config builds successfully
 - RAGAS_* environment variables take precedence over eval.cfg, same as the rest of ChaBo
 - a missing AZURE_API_KEY env var fails loudly rather than silently
@@ -33,12 +34,12 @@ def _config(text=AZURE_CONFIG) -> configparser.ConfigParser:
 
 
 def test_rejects_unsupported_provider(monkeypatch):
-    monkeypatch.setenv("AZURE_API_KEY", "fake-key")
+    monkeypatch.delenv("RAGAS_JUDGE_PROVIDER", raising=False)
     config = _config(
         """
         [ragas]
-        JUDGE_PROVIDER = openai
-        JUDGE_MODEL = gpt-4o
+        JUDGE_PROVIDER = cohere
+        JUDGE_MODEL = command-r
         """
     )
 
@@ -103,3 +104,68 @@ def test_eval_cfg_next_to_cli_has_judge_settings():
     assert config.read(EVAL_CONFIG_PATH) == [EVAL_CONFIG_PATH]
     for key in ("JUDGE_PROVIDER", "JUDGE_MODEL", "AZURE_ENDPOINT"):
         assert config.get("ragas", key)
+
+
+def _client(llm):
+    """The AsyncOpenAI client inside RAGAS's instructor wrapper."""
+    return llm.client.client
+
+
+@pytest.fixture
+def no_ragas_env(monkeypatch):
+    for var in ("RAGAS_JUDGE_PROVIDER", "RAGAS_JUDGE_MODEL", "RAGAS_INFERENCE_PROVIDER",
+                "RAGAS_ORGANIZATION", "RAGAS_BASE_URL", "RAGAS_API_KEY_ENV"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_openai_judge(monkeypatch, no_ragas_env):
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+    llm = build_judge(_config("[ragas]\nJUDGE_PROVIDER = openai\nJUDGE_MODEL = gpt-4.1\n"))
+    assert llm.model == "gpt-4.1"
+    assert str(_client(llm).base_url).startswith("https://api.openai.com/")
+
+
+def test_huggingface_router_judge(monkeypatch, no_ragas_env):
+    monkeypatch.setenv("HF_TOKEN", "fake-token")
+    config = _config(
+        "[ragas]\nJUDGE_PROVIDER = huggingface_router\nJUDGE_MODEL = Qwen/Qwen3-235B\n"
+        "INFERENCE_PROVIDER = novita\nORGANIZATION = my-org\n"
+    )
+    llm = build_judge(config)
+
+    assert llm.model == "Qwen/Qwen3-235B:novita"
+    assert resolve_judge_model(config) == "Qwen/Qwen3-235B:novita"
+    assert str(_client(llm).base_url) == "https://router.huggingface.co/v1/"
+    assert _client(llm).api_key == "fake-token"
+    assert _client(llm)._custom_headers.get("X-HF-Bill-To") == "my-org"
+
+
+def test_huggingface_router_auto_provider_keeps_model(monkeypatch, no_ragas_env):
+    monkeypatch.setenv("HF_TOKEN", "fake-token")
+    config = _config(
+        "[ragas]\nJUDGE_PROVIDER = huggingface_router\nJUDGE_MODEL = Qwen/Qwen3-235B\n"
+        "INFERENCE_PROVIDER = auto\n"
+    )
+    assert build_judge(config).model == "Qwen/Qwen3-235B"
+
+
+def test_huggingface_router_missing_token_raises(monkeypatch, no_ragas_env):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="HF_TOKEN"):
+        build_judge(_config("[ragas]\nJUDGE_PROVIDER = huggingface_router\nJUDGE_MODEL = m\n"))
+
+
+def test_openai_compatible_judge(monkeypatch, no_ragas_env):
+    monkeypatch.setenv("MY_VLLM_KEY", "fake-key")
+    llm = build_judge(_config(
+        "[ragas]\nJUDGE_PROVIDER = openai_compatible\nJUDGE_MODEL = qwen3\n"
+        "BASE_URL = https://vllm.example.org/v1\nAPI_KEY_ENV = MY_VLLM_KEY\n"
+    ))
+    assert str(_client(llm).base_url) == "https://vllm.example.org/v1/"
+    assert _client(llm).api_key == "fake-key"
+
+
+def test_openai_compatible_requires_base_url(monkeypatch, no_ragas_env):
+    monkeypatch.setenv("RAGAS_JUDGE_API_KEY", "fake-key")
+    with pytest.raises(ValueError, match="BASE_URL"):
+        build_judge(_config("[ragas]\nJUDGE_PROVIDER = openai_compatible\nJUDGE_MODEL = m\n"))
