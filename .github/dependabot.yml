@@ -1,16 +1,18 @@
-
 version: 2
 updates:
   - package-ecosystem: "pip"
     directories:
       - "/"
-      - "/tests/eval"
+      - "/tests/eval/ragas"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
       python-minor-patch:
         update-types: ["minor", "patch"]
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
