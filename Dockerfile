@@ -1,6 +1,6 @@
 #CHATFED_ORCHESTRATOR
 
-FROM python:3.11.11
+FROM python:3.15.1
 
 # ---------- Create Non-Root User ----------
 # Ensures proper file permissions for dev and runtime
