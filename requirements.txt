@@ -1,4 +1,4 @@
-gradio==5.50.0
+gradio==6.32.0
 gradio_client==1.14.0
 qdrant_client==1.17.1
 fastembed==0.8.0
