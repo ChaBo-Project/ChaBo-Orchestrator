@@ -17,7 +17,7 @@ configure_logging()
 from fastapi import FastAPI, Header, HTTPException
 from langserve import add_routes
 from langchain_core.runnables import RunnableLambda
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 from functools import partial
 
@@ -33,6 +33,7 @@ from components.orchestration.streaming import (
     answer_withheld_by_guards, make_output_classifier, make_output_filter,
 )
 from components.api import build_openai_router
+from components.build_info import build_info
 from components.utils import getconfig, instance_config_dir, load_prompt_overrides
 from components.retriever.filters import FILTER_VALUES, validate_filterable_fields
 from components.rewriter.db_context import DBContext, load_db_context_from_instance
@@ -243,7 +244,7 @@ app.add_middleware(ExecutionLoggingMiddleware)
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    return {"status": "healthy", **build_info()}
 
 @app.get("/")
 async def root():
@@ -280,11 +281,18 @@ class EvalContext(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
+class EvalInstanceInfo(BaseModel):
+    version: str
+    commit: str
+
+
 class EvalQueryResponse(BaseModel):
     answer: Optional[str] = None
     retrieved_contexts: List[EvalContext] = []
     status: str  # "ok" | "error" | "no_context" | "blocked"
     error: Optional[str] = None
+    # Version of the orchestrator that answered - recorded by the eval CLI with each run.
+    instance: EvalInstanceInfo = Field(default_factory=lambda: EvalInstanceInfo(**build_info()))
 
 
 @app.post("/eval-query", response_model=EvalQueryResponse, include_in_schema=False)
