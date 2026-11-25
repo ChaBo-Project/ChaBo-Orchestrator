@@ -30,8 +30,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from config_render import apply_override, render_config
-from container_runner import temp_container
+from config_render import ConfigRenderError, apply_override, render_config
+from container_runner import ContainerError, temp_container
 from eval_config import load_config
 from judge import build_judge, resolve_judge_model, UnsupportedJudgeProviderError
 from run_record import (
@@ -293,7 +293,15 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
     if args.instance_repo:
-        return await _run_mode_b(args, token)
+        # Check the override before rendering, so a typo fails in a second, not after a render.
+        if args.override and not Path(args.override).is_file():
+            print(f"Override file not found: {args.override}")
+            return 1
+        try:
+            return await _run_mode_b(args, token)
+        except (ConfigRenderError, ContainerError, FileNotFoundError) as exc:
+            print(f"Mode B failed: {exc}")
+            return 1
     return await _run_mode_a(args, token)
 
 

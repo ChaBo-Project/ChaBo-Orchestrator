@@ -71,3 +71,25 @@ def test_render_config_accepts_relative_instance_repo(tmp_path, monkeypatch):
     assert tag == "v1"
     assert (rendered_dir / "params.override.cfg").exists()
     shutil.rmtree(rendered_dir)
+
+def test_render_failure_removes_temp_dir(tmp_path, monkeypatch):
+    repo = tmp_path / "instance"
+    (repo / "orchestrator" / "instance_config").mkdir(parents=True)
+    (repo / "orchestrator" / "instance_config" / "instance.yaml").write_text("", encoding="utf-8")
+    (repo / "deploy.env").write_text('CHABO_TAG="0.9.5"\n', encoding="utf-8")
+    created = []
+    real_mkdtemp = config_render.tempfile.mkdtemp
+
+    def tracking_mkdtemp(**kwargs):
+        created.append(real_mkdtemp(dir=tmp_path, **kwargs))
+        return created[-1]
+
+    monkeypatch.setattr(config_render.tempfile, "mkdtemp", tracking_mkdtemp)
+    monkeypatch.setattr(
+        config_render.subprocess, "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "validation failed"),
+    )
+
+    with pytest.raises(config_render.ConfigRenderError):
+        render_config(repo)
+    assert created and not Path(created[0]).exists()

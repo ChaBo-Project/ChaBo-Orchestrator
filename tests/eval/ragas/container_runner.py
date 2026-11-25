@@ -11,6 +11,7 @@ import asyncio
 import os
 import subprocess
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Dict
@@ -19,7 +20,7 @@ import httpx
 
 CONTAINER_IMAGE_BASE = "ghcr.io/chabo-project/chabo-rag-orchestrator"
 CONTAINER_INTERNAL_PORT = 7860
-CONTAINER_NAME = "chabo-eval-temp"
+CONTAINER_NAME_PREFIX = "chabo-eval-"
 
 
 class ContainerError(RuntimeError):
@@ -33,9 +34,11 @@ def _run(cmd, env=None):
     return result
 
 
-def start_container(chabo_tag: str, rendered_config_dir: Path, host_port: int, secrets: Dict[str, str]) -> None:
-    """Pull and start the container, bound to 127.0.0.1:<host_port>. Raises ContainerError on failure."""
+def start_container(chabo_tag: str, rendered_config_dir: Path, host_port: int, secrets: Dict[str, str]) -> str:
+    """Pull and start the container, bound to 127.0.0.1:<host_port>. Returns its name, unique
+    per run so two runs never collide. Raises ContainerError on failure."""
     image = f"{CONTAINER_IMAGE_BASE}:{chabo_tag}"
+    name = f"{CONTAINER_NAME_PREFIX}{uuid.uuid4().hex[:8]}"
     _run(["docker", "pull", image])
 
     env_args = ["-e", "INSTANCE_CONFIG_DIR=/app/instance_config"]
@@ -44,17 +47,18 @@ def start_container(chabo_tag: str, rendered_config_dir: Path, host_port: int, s
 
     _run([
         "docker", "run", "-d", "--rm",
-        "--name", CONTAINER_NAME,
+        "--name", name,
         "-p", f"127.0.0.1:{host_port}:{CONTAINER_INTERNAL_PORT}",
         "-v", f"{rendered_config_dir}:/app/instance_config:ro",
         *env_args,
         image,
     ], env={**os.environ, **secrets})
+    return name
 
 
-def stop_container() -> None:
+def stop_container(name: str) -> None:
     """Stop and remove the container - safe to call even if it's already gone/never started."""
-    subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True, text=True)
+    subprocess.run(["docker", "stop", name], capture_output=True, text=True)
 
 
 async def wait_for_health(host_port: int, timeout_s: float = 90.0) -> None:
@@ -83,9 +87,9 @@ async def temp_container(
     stop it on the way out - including on an exception, so a crash mid-run never leaves a
     container running.
     """
-    start_container(chabo_tag, rendered_config_dir, host_port, secrets)
+    name = start_container(chabo_tag, rendered_config_dir, host_port, secrets)
     try:
         await wait_for_health(host_port)
         yield f"http://127.0.0.1:{host_port}"
     finally:
-        stop_container()
+        stop_container(name)

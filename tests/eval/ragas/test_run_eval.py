@@ -176,3 +176,36 @@ def test_eval_query_request_carries_hf_bearer(monkeypatch):
     asyncio.run(go())
     assert calls[0].headers["Authorization"] == "Bearer hf_secret"
     assert calls[0].headers["X-Eval-Token"] == "tok"
+
+
+def _mode_b_args(tmp_path, **overrides):
+    values = dict(
+        eval_token="tok", endpoint=None, instance_repo=str(tmp_path), override=None,
+        allow_http=False, out_dir=str(tmp_path / "results"), host_port=18860,
+    )
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def test_missing_override_fails_before_render(tmp_path, monkeypatch):
+    import run_eval
+
+    rendered = []
+    monkeypatch.setattr(run_eval, "render_config", lambda repo: rendered.append(repo))
+
+    args = _mode_b_args(tmp_path, override=str(tmp_path / "typo.cfg"))
+    assert asyncio.run(run_eval.main_async(args)) == 1
+    assert rendered == []
+
+
+def test_mode_b_errors_print_a_message_not_a_traceback(tmp_path, monkeypatch, capsys):
+    import run_eval
+    from config_render import ConfigRenderError
+
+    def failing_render(repo):
+        raise ConfigRenderError("validate-config.py failed: bad value")
+
+    monkeypatch.setattr(run_eval, "render_config", failing_render)
+
+    assert asyncio.run(run_eval.main_async(_mode_b_args(tmp_path))) == 1
+    assert "Mode B failed: validate-config.py failed" in capsys.readouterr().out
