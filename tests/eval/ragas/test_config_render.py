@@ -93,3 +93,26 @@ def test_render_failure_removes_temp_dir(tmp_path, monkeypatch):
     with pytest.raises(config_render.ConfigRenderError):
         render_config(repo)
     assert created and not Path(created[0]).exists()
+
+
+def test_parse_env_file_handles_export_quotes_and_comments(tmp_path):
+    env_file = tmp_path / "deploy.env"
+    env_file.write_text(
+        "# comment line\n"
+        'export CHABO_TAG="0.9.5"  # pinned release\n'
+        "PLAIN=value  # trailing comment\n"
+        "SINGLE='a # not a comment'\n"
+        "URL=https://example.org/#anchor\n"
+        "EMPTY=\n",
+        encoding="utf-8",
+    )
+
+    values = config_render._parse_env_file(env_file)
+
+    assert values == {
+        "CHABO_TAG": "0.9.5",
+        "PLAIN": "value",
+        "SINGLE": "a # not a comment",
+        "URL": "https://example.org/#anchor",
+        "EMPTY": "",
+    }

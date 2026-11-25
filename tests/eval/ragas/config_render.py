@@ -18,6 +18,7 @@ this working copy, which only needs to exist for the duration of one run.
 """
 import configparser
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,14 +32,24 @@ class ConfigRenderError(RuntimeError):
 
 
 def _parse_env_file(path: Path) -> Dict[str, str]:
-    """Parse deploy.env's simple KEY="value" / KEY=value shell-style format."""
+    """Parse deploy.env's shell-style format: KEY=value, KEY="value", KEY='value', an optional
+    leading `export`, and trailing `# comments` (kept only inside quotes)."""
     values: Dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        value = value.strip()
+        if value[:1] in ('"', "'"):
+            end = value.find(value[0], 1)
+            value = value[1:end] if end != -1 else value[1:]
+        else:
+            value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+        values[key] = value
     return values
 
 
