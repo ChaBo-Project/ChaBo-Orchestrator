@@ -645,6 +645,8 @@ python tests/eval/ragas/run_eval.py --endpoint http://localhost:7860 --testset p
 - `--limit N` runs only the first N cases (cheap dry run).
 - Output: a UTC-timestamped folder per run under `tests/eval/ragas/results/` (gitignored, override with `--out-dir`), containing the per-case results and `summary.json`. A row is appended to `runs.csv` in the same base folder for each run.
 - A rejected token (401/404) stops the run before any judging cost.
+- `--endpoint` must be `https://`, except for `localhost`/`127.0.0.1`. Plain `http://` to another host is refused, because the eval token would travel unencrypted; `--allow-http` overrides this for a trusted private network.
+- For a private Hugging Face Space, set `HF_TOKEN`: it is sent as a Bearer header to `*.hf.space` hosts only.
 
 The judge LLM is configured in `tests/eval/ragas/eval.cfg` (`[ragas]` section). It is eval-only, so it lives next to the CLI and never ships in the image, and it is independent of `[generator]` to avoid self-preference bias in scoring. Every key can be overridden by an env var `RAGAS_<KEY>` (e.g. `RAGAS_JUDGE_MODEL`).
 

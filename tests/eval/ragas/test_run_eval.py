@@ -129,3 +129,50 @@ def test_raw_answers_saved_even_if_scoring_crashes(tmp_path, monkeypatch):
 
     lines = (tmp_path / "results" / "run-1" / "cases.jsonl").read_text().splitlines()
     assert [json.loads(line)["answer"] for line in lines] == ["a"]
+
+
+@pytest.mark.parametrize("endpoint", [
+    "https://my-space.hf.space", "http://localhost:7860", "http://127.0.0.1:18860", "http://[::1]:7860",
+])
+def test_check_endpoint_accepts_https_and_local_http(endpoint):
+    from run_eval import check_endpoint
+
+    check_endpoint(endpoint)
+
+
+@pytest.mark.parametrize("endpoint", ["http://10.0.0.5:7860", "http://my-space.hf.space", "ftp://x", "localhost:7860"])
+def test_check_endpoint_rejects_remote_http_and_non_urls(endpoint):
+    from run_eval import check_endpoint
+
+    with pytest.raises(ValueError):
+        check_endpoint(endpoint)
+
+
+def test_check_endpoint_allow_http_for_private_network():
+    from run_eval import check_endpoint
+
+    check_endpoint("http://10.0.0.5:7860", allow_http=True)
+
+
+def test_hf_token_sent_only_to_hf_spaces(monkeypatch):
+    from run_eval import request_headers
+
+    monkeypatch.setenv("HF_TOKEN", "hf_secret")
+    assert request_headers("https://my-space.hf.space", "tok")["Authorization"] == "Bearer hf_secret"
+    for endpoint in ("https://example.org", "https://hf.space.evil.org", "http://localhost:7860"):
+        headers = request_headers(endpoint, "tok")
+        assert "Authorization" not in headers
+        assert headers["X-Eval-Token"] == "tok"
+
+
+def test_eval_query_request_carries_hf_bearer(monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_secret")
+    calls = []
+
+    async def go():
+        async with _client(200, calls) as client:
+            await run_case(client, "https://my-space.hf.space", "tok", "q?")
+
+    asyncio.run(go())
+    assert calls[0].headers["Authorization"] == "Bearer hf_secret"
+    assert calls[0].headers["X-Eval-Token"] == "tok"

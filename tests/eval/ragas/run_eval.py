@@ -76,6 +76,33 @@ class EvalAuthError(RuntimeError):
     """The orchestrator rejected the eval token (or has no EVAL_API_KEY set at all)."""
 
 
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def check_endpoint(endpoint: str, allow_http: bool = False) -> None:
+    """Refuse an endpoint the eval token should not be sent to: anything that is not an
+    http(s) URL, and plain http:// to a non-local host (the token would travel unencrypted)
+    unless allow_http is set for a trusted private network."""
+    url = httpx.URL(endpoint)
+    if url.scheme not in ("http", "https") or not url.host:
+        raise ValueError(f"--endpoint must be an http(s) URL, e.g. https://... - got {endpoint!r}")
+    if url.scheme == "http" and url.host not in LOCAL_HOSTS and not allow_http:
+        raise ValueError(
+            f"Refusing plain http:// to {url.host}: the eval token would be sent unencrypted. "
+            "Use https://, or pass --allow-http for a trusted private network."
+        )
+
+
+def request_headers(endpoint: str, token: str) -> Dict[str, str]:
+    """Headers for /eval-query. A private Hugging Face Space also needs the HF token as a
+    Bearer header - sent only to *.hf.space hosts, never to any other endpoint."""
+    headers = {"X-Eval-Token": token}
+    hf_token = os.getenv("HF_TOKEN")
+    if hf_token and (httpx.URL(endpoint).host or "").endswith(".hf.space"):
+        headers["Authorization"] = f"Bearer {hf_token}"
+    return headers
+
+
 async def _call_eval_query(
     client: httpx.AsyncClient, endpoint: str, token: str, question: str
 ) -> Dict[str, Any]:
@@ -83,7 +110,7 @@ async def _call_eval_query(
     response = await client.post(
         f"{endpoint.rstrip('/')}/eval-query",
         json={"question": question},
-        headers={"X-Eval-Token": token},
+        headers=request_headers(endpoint, token),
         timeout=120.0,
     )
     # /eval-query answers 404 (not 401) on a bad token, so both mean "auth problem".
@@ -92,7 +119,8 @@ async def _call_eval_query(
         raise EvalAuthError(
             f"{endpoint} rejected the eval token (HTTP {response.status_code}). "
             "Check that --eval-token / EVAL_API_KEY matches the EVAL_API_KEY secret "
-            "set on that instance, and that the instance runs a version that has /eval-query."
+            "set on that instance, that the instance runs a version that has /eval-query, "
+            "and, for a private Hugging Face Space, that HF_TOKEN is set."
         )
     response.raise_for_status()
     return response.json()
@@ -252,6 +280,13 @@ async def main_async(args: argparse.Namespace) -> int:
         print("No eval token - pass --eval-token or set EVAL_API_KEY.")
         return 1
 
+    if args.endpoint:
+        try:
+            check_endpoint(args.endpoint, args.allow_http)
+        except ValueError as exc:
+            print(exc)
+            return 1
+
 
     # One folder per run so runs never overwrite each other. No ":" - invalid in Windows paths.
     args.run_dir = os.path.join(args.out_dir, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ"))
@@ -274,6 +309,7 @@ def main() -> None:
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Base folder for results: each run gets its own timestamped subfolder; runs.csv stays here")
     parser.add_argument("--override", default=None, help="Mode B only: config override file to layer on top")
     parser.add_argument("--host-port", type=int, default=DEFAULT_HOST_PORT, help="Mode B only: local port for the temp container")
+    parser.add_argument("--allow-http", action="store_true", help="Mode A only: allow plain http:// to a non-local host (trusted private network)")
     args = parser.parse_args()
 
     if args.override and not args.instance_repo:
