@@ -24,6 +24,7 @@ import os
 import shutil
 import subprocess
 import sys
+import configparser
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -98,7 +99,8 @@ def request_headers(endpoint: str, token: str) -> Dict[str, str]:
     Bearer header - sent only to *.hf.space hosts, never to any other endpoint."""
     headers = {"X-Eval-Token": token}
     hf_token = os.getenv("HF_TOKEN")
-    if hf_token and (httpx.URL(endpoint).host or "").endswith(".hf.space"):
+    url = httpx.URL(endpoint)
+    if hf_token and url.scheme == "https" and (url.host or "").endswith(".hf.space"):
         headers["Authorization"] = f"Bearer {hf_token}"
     return headers
 
@@ -136,7 +138,7 @@ async def run_case(
     """
     try:
         return await _call_eval_query(client, endpoint, token, question)
-    except (httpx.HTTPError, ValueError) as exc:
+    except (httpx.HTTPError, ValueError):
         try:
             return await _call_eval_query(client, endpoint, token, question)
         except (httpx.HTTPError, ValueError) as retry_exc:
@@ -185,9 +187,12 @@ async def _score_and_record(
 
     # Build the judge before running any case: a judge config error (missing key, endpoint,
     # or model) must stop the run before it spends on endpoint queries.
-    config = load_config(EVAL_CONFIG_PATH)
     try:
+        config = load_config(EVAL_CONFIG_PATH)
         judge = build_judge(config)
+    except configparser.Error:
+        print("Judge configuration error: check the INI syntax in eval.cfg.")
+        return 1
     except (UnsupportedJudgeProviderError, ValueError, RuntimeError) as exc:
         print(f"Judge configuration error: {exc}")
         return 1
@@ -284,6 +289,9 @@ async def main_async(args: argparse.Namespace) -> int:
     if args.endpoint:
         try:
             check_endpoint(args.endpoint, args.allow_http)
+        except httpx.InvalidURL:
+            print("Invalid --endpoint URL. Check the host and port.")
+            return 1
         except ValueError as exc:
             print(exc)
             return 1
@@ -300,6 +308,9 @@ async def main_async(args: argparse.Namespace) -> int:
             return 1
         try:
             return await _run_mode_b(args, token)
+        except configparser.Error:
+            print("Mode B failed: check the INI syntax in the rendered config or override file.")
+            return 1
         except (ConfigRenderError, ContainerError, FileNotFoundError) as exc:
             print(f"Mode B failed: {exc}")
             return 1

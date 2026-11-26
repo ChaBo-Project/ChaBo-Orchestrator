@@ -7,6 +7,7 @@ eval plan for the full column reference and rules.
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+from numbers import Number
 
 import pandas as pd
 
@@ -46,6 +47,8 @@ def _should_be_answered(value: object) -> bool:
     """Blank means yes. No/N/False/0 - typed, or an Excel boolean FALSE - means no."""
     if isinstance(value, bool):
         return value
+    if isinstance(value, Number) and value == 0:
+        return False
     text = _clean_cell(value)
     return text is None or text.lower() not in NO_VALUES
 

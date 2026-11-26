@@ -186,3 +186,10 @@ def test_should_be_answered_yes_variants(tmp_path, value):
         columns=FULL_COLUMNS,
     )
     assert load_testset(str(path))[0].should_be_answered is True
+
+def test_numeric_zero_means_should_not_be_answered():
+    import numpy as np
+    from testset import _should_be_answered
+
+    assert _should_be_answered(0.0) is False
+    assert _should_be_answered(np.float32(0)) is False

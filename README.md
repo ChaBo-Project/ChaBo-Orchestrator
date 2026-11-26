@@ -657,6 +657,13 @@ The judge LLM is configured in `tests/eval/ragas/eval.cfg` (`[ragas]` section). 
 | `huggingface_router` | optional `INFERENCE_PROVIDER`, `ORGANIZATION` (same as `[generator]`) | `HF_TOKEN` |
 | `openai_compatible` | `BASE_URL` (e.g. a vLLM server), optional `API_KEY_ENV` | named by `API_KEY_ENV` (default `RAGAS_JUDGE_API_KEY`) |
 
+Use HTTPS for remote judges. OpenAI-compatible judges can use HTTP on
+loopback. For an unauthenticated judge on a private Docker network, set
+`RAGAS_ALLOW_HTTP_JUDGE_HOST` to its exact service name, such as `judge`,
+and use a URL such as `http://judge:8000/v1`. This exception is rejected
+if a judge API key is configured. The CLI's `--allow-http` flag only
+applies to the app being evaluated.
+
 ```ini
 [ragas]
 JUDGE_PROVIDER = huggingface_router

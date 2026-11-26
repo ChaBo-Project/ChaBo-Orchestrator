@@ -20,12 +20,17 @@ RAGAS metrics ask the judge for strict structured (JSON) output. Large models ha
 well; small open models, or inference providers without tool-call / JSON support, may fail -
 those cases show up as scoring_error, so try a new judge with --limit 2 first.
 """
-from typing import Any, Dict, Optional
 
+import os
+import httpx
+
+from typing import Any, Dict, Optional
 from eval_config import get_api_key, get_config_value
 
 HF_ROUTER_BASE_URL = "https://router.huggingface.co/v1"
 SUPPORTED_PROVIDERS = ("azure", "openai", "huggingface_router", "openai_compatible")
+OPENAI_BASE_URL = "https://api.openai.com/v1"
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 class UnsupportedJudgeProviderError(ValueError):
@@ -41,15 +46,28 @@ def _optional(config, key: str) -> str:
     return str(_value(config, key, fallback="")).strip()
 
 
-def _require_url(config, key: str) -> str:
-    url = _optional(config, key)
-    # Without a real URL, the OpenAI SDK would fall back to api.openai.com and send the
-    # provider's key there.
-    if not url.startswith(("https://", "http://")):
-        raise ValueError(
-            f"[ragas] {key} (or env RAGAS_{key}) must be an http(s) URL - got {url!r}."
-        )
-    return url
+def _require_url(config, key: str, *, allow_compatible_http: bool = False) -> httpx.URL:
+    try:
+        url = httpx.URL(_optional(config, key))
+    except httpx.InvalidURL:
+        raise ValueError(f"[ragas] {key} must be an http(s) URL.") from None
+
+    if url.scheme not in {"https", "http"} or not url.host:
+        raise ValueError(f"[ragas] {key} must be an http(s) URL.")
+    if url.username or url.password:
+        raise ValueError(f"[ragas] {key} must not contain credentials.")
+
+    if url.scheme == "https":
+        return url
+
+    allowed_host = _optional(config, "ALLOW_HTTP_JUDGE_HOST").strip().lower()
+    if allow_compatible_http and (
+        url.host in LOOPBACK_HOSTS
+        or (url.host == allowed_host and "." not in url.host and ":" not in url.host)
+    ):
+        return url
+
+    raise ValueError(f"[ragas] {key} requires HTTPS for this judge host.")
 
 
 def resolve_judge_model(config) -> str:
@@ -74,10 +92,10 @@ def _client_settings(config, provider: str) -> Dict[str, Any]:
     headers: Dict[str, str] = {}
     base_url: Optional[str]
     if provider == "azure":
-        base_url = _require_url(config, "AZURE_ENDPOINT")
+        base_url = str(_require_url(config, "AZURE_ENDPOINT"))
         api_key = get_api_key("AZURE_API_KEY")
     elif provider == "openai":
-        base_url = None  # the SDK's default, api.openai.com
+        base_url = OPENAI_BASE_URL
         api_key = get_api_key("OPENAI_API_KEY")
     elif provider == "huggingface_router":
         base_url = HF_ROUTER_BASE_URL
@@ -86,8 +104,16 @@ def _client_settings(config, provider: str) -> Dict[str, Any]:
         if organization:
             headers["X-HF-Bill-To"] = organization
     else:  # openai_compatible
-        base_url = _require_url(config, "BASE_URL")
-        api_key = get_api_key(_optional(config, "API_KEY_ENV") or "RAGAS_JUDGE_API_KEY")
+        url = _require_url(config, "BASE_URL", allow_compatible_http=True)
+        base_url = str(url)
+        key_env = _optional(config, "API_KEY_ENV") or "RAGAS_JUDGE_API_KEY"
+
+        if url.scheme == "http" and url.host not in LOOPBACK_HOSTS:
+            if os.getenv(key_env):
+                raise ValueError("[ragas] Use HTTPS when a Docker judge API key is configured.")
+            api_key = "no-auth"  # Nonsecret placeholder required by the SDK.
+        else:
+            api_key = get_api_key(key_env)
     return {"base_url": base_url, "api_key": api_key, "default_headers": headers or None}
 
 
