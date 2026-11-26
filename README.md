@@ -640,34 +640,40 @@ The Orchestrator must expose `/eval-query`, which is only enabled when `EVAL_API
 python tests/eval/ragas/run_eval.py --endpoint http://localhost:7860 --testset path/to/questions.xlsx --limit 2
 ```
 
-- Run it from the repo root; the script uses repo-relative imports.
+- The CLI is self-contained (it imports nothing from `src/`), so it can run from any folder.
 - `--endpoint` uses an already-running Orchestrator; `--instance-repo` starts a temporary container from a local instance repo instead.
 - `--limit N` runs only the first N cases (cheap dry run).
 - Output: a UTC-timestamped folder per run under `tests/eval/ragas/results/` (gitignored, override with `--out-dir`), containing the per-case results and `summary.json`. A row is appended to `runs.csv` in the same base folder for each run.
 - A rejected token (401/404) stops the run before any judging cost.
+- `--endpoint` must be `https://`, except for `localhost`/`127.0.0.1`. Plain `http://` to another host is refused, because the eval token would travel unencrypted; `--allow-http` overrides this for a trusted private network.
+- For a private Hugging Face Space, set `HF_TOKEN`: it is sent as a Bearer header to `*.hf.space` hosts only.
 
-The judge LLM is configured in `params.cfg`'s `[ragas]` section — independent of the `[generator]` section, to avoid self-preference bias in scoring. Only Azure is supported in v1:
+The judge LLM is configured in `tests/eval/ragas/eval.cfg` (`[ragas]` section). It is eval-only, so it lives next to the CLI and never ships in the image, and it is independent of `[generator]` to avoid self-preference bias in scoring. Every key can be overridden by an env var `RAGAS_<KEY>` (e.g. `RAGAS_JUDGE_MODEL`).
+
+| `JUDGE_PROVIDER` | Extra keys | API key (env var) |
+|---|---|---|
+| `azure` | `AZURE_ENDPOINT` (`https://<resource>.openai.azure.com/openai/v1/`) | `AZURE_API_KEY` |
+| `openai` | none | `OPENAI_API_KEY` |
+| `huggingface_router` | optional `INFERENCE_PROVIDER`, `ORGANIZATION` (same as `[generator]`) | `HF_TOKEN` |
+| `openai_compatible` | `BASE_URL` (e.g. a vLLM server), optional `API_KEY_ENV` | named by `API_KEY_ENV` (default `RAGAS_JUDGE_API_KEY`) |
+
+Use HTTPS for remote judges. OpenAI-compatible judges can use HTTP on
+loopback. For an unauthenticated judge on a private Docker network, set
+`RAGAS_ALLOW_HTTP_JUDGE_HOST` to its exact service name, such as `judge`,
+and use a URL such as `http://judge:8000/v1`. This exception is rejected
+if a judge API key is configured. The CLI's `--allow-http` flag only
+applies to the app being evaluated.
 
 ```ini
 [ragas]
-# LLM used by the RAGAS eval CLI (tests/eval/ragas/run_eval.py) to judge/score
-# metrics (faithfulness, context recall, context precision, factual correctness).
-# Eval-only — never read by the running application; kept here purely so all runtime
-# config lives in one documented place (see CLAUDE.md).
-# Deliberately independent of [generator]: judging with the same model that generated
-# the answer risks self-preference bias in RAGAS-style scoring.
-# Supported providers: azure (v1)
-JUDGE_PROVIDER = azure
-# The Azure deployment name of the judge model
-JUDGE_MODEL = your-deployment-name
+JUDGE_PROVIDER = huggingface_router
+JUDGE_MODEL = Qwen/Qwen3-235B-A22B-Instruct-2507
+INFERENCE_PROVIDER = auto
 JUDGE_MAX_TOKENS = 1024
 JUDGE_TEMPERATURE = 0.1
-
-# Azure OpenAI endpoint of the judge deployment
-AZURE_ENDPOINT = https://your-resource.openai.azure.com/openai/v1/
 ```
 
-Set the judge's API key as the environment variable `AZURE_API_KEY`. RAGAS metrics rely on the judge model's reasoning ability — use a capable model for reliable scores.
+RAGAS asks the judge for strict structured (JSON) output, so use a capable model, and an inference provider that supports tool calling / JSON output. Try a new judge with `--limit 2` first: cases it cannot score are reported as `scoring_error` in `cases.jsonl` and counted in `summary.json`.
 
 ### Filter Ground Truth Checking
 

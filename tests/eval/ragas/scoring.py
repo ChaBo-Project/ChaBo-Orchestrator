@@ -5,12 +5,8 @@ plan): faithfulness, context recall, context precision, factual correctness.
 Only "ok" cases are scored - a failed/blocked/no-context case is never averaged in as if it
 were a real answer (see the status taxonomy in main.py's eval_query).
 """
-import os
-import sys
-from typing import Any, Dict, List
-
-# Add src/ to path so imports match how main.py resolves them
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src")))
+import math
+from typing import Any, Dict, List, Optional
 
 METRIC_NAMES = ("faithfulness", "context_recall", "context_precision", "factual_correctness")
 
@@ -56,11 +52,20 @@ async def score_case(
     )
 
     return {
-        "faithfulness": faithfulness.value,
-        "context_recall": context_recall.value,
-        "context_precision": context_precision.value,
-        "factual_correctness": factual_correctness.value,
+        "faithfulness": _finite(faithfulness.value),
+        "context_recall": _finite(context_recall.value),
+        "context_precision": _finite(context_precision.value),
+        "factual_correctness": _finite(factual_correctness.value),
     }
+
+
+def _finite(value: Any) -> Optional[float]:
+    """A metric score, or None when RAGAS returns NaN/inf (e.g. the judge produced no
+    claims) - NaN would poison the run averages and is not valid JSON."""
+    if value is None:
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
 
 
 async def score_testset(metrics: Dict[str, Any], results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

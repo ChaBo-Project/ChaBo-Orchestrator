@@ -148,3 +148,16 @@ def test_write_cases_csv_flattens_scores_and_blanks_unscored(tmp_path):
     assert rows[1]["error"] == "something failed"
     # cases.csv is deliberately answer/score-only - no chunk text column at all.
     assert "chunks" not in rows[1]
+
+
+def test_summarize_skips_nan_and_missing_scores():
+    results = [
+        _ok(1, faithfulness=float("nan"), context_recall=0.8, context_precision=None, factual_correctness=0.4),
+        _ok(2, faithfulness=0.6, context_recall=0.4, context_precision=0.8, factual_correctness=0.6),
+    ]
+
+    summary = summarize(results)
+
+    assert summary["averages"]["faithfulness"] == pytest.approx(0.6)
+    assert summary["averages"]["context_precision"] == pytest.approx(0.8)
+    json.dumps(summary, allow_nan=False)  # valid JSON, no NaN

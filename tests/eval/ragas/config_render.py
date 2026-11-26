@@ -18,6 +18,7 @@ this working copy, which only needs to exist for the duration of one run.
 """
 import configparser
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,14 +32,24 @@ class ConfigRenderError(RuntimeError):
 
 
 def _parse_env_file(path: Path) -> Dict[str, str]:
-    """Parse deploy.env's simple KEY="value" / KEY=value shell-style format."""
+    """Parse deploy.env's shell-style format: KEY=value, KEY="value", KEY='value', an optional
+    leading `export`, and trailing `# comments` (kept only inside quotes)."""
     values: Dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        value = value.strip()
+        if value[:1] in ('"', "'"):
+            end = value.find(value[0], 1)
+            value = value[1:end] if end != -1 else value[1:]
+        else:
+            value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+        values[key] = value
     return values
 
 
@@ -50,7 +61,7 @@ def render_config(instance_repo_dir: Path) -> Tuple[Path, str]:
     containing instance.yaml, prompt_overrides.md (if present), and the rendered
     params.override.cfg - the same three files the real deploy step produces, just written
     somewhere that isn't the user's persistent local checkout. Caller is responsible for
-    cleaning this up once done with it (e.g. shutil.rmtree) - not deleted automatically here.
+    cleaning this up once done with it (e.g. shutil.rmtree); on failure it is removed here.
     """
     # Absolute path: the scripts run with cwd=instance_repo_dir, so a relative path would be
     # resolved a second time against that cwd and not be found.
@@ -62,7 +73,17 @@ def render_config(instance_repo_dir: Path) -> Tuple[Path, str]:
 
     instance_config_dir = instance_repo_dir / "orchestrator" / "instance_config"
     rendered_dir = Path(tempfile.mkdtemp(prefix="chabo-eval-"))
+    try:
+        _render_into(instance_repo_dir, instance_config_dir, rendered_dir, deploy_env)
+    except BaseException:
+        # The caller only cleans up a directory it received - remove it here on failure.
+        shutil.rmtree(rendered_dir, ignore_errors=True)
+        raise
+    return rendered_dir, chabo_tag
 
+
+def _render_into(instance_repo_dir: Path, instance_config_dir: Path, rendered_dir: Path, deploy_env: Dict[str, str]) -> None:
+    """Copy the instance files into rendered_dir and run the repo's render + validate scripts."""
     shutil.copy(instance_config_dir / "instance.yaml", rendered_dir / "instance.yaml")
     prompt_overrides = instance_config_dir / "prompt_overrides.md"
     if prompt_overrides.exists():
@@ -84,8 +105,6 @@ def render_config(instance_repo_dir: Path) -> Tuple[Path, str]:
         )
         if result.returncode != 0:
             raise ConfigRenderError(f"{script} failed:\n{result.stdout}\n{result.stderr}")
-
-    return rendered_dir, chabo_tag
 
 
 def apply_override(rendered_config_path: Path, override_path: Optional[Path]) -> Dict[str, Dict[str, str]]:

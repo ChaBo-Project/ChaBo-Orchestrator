@@ -131,3 +131,15 @@ def test_score_testset_does_not_mutate_input():
     asyncio.run(score_testset(metrics, results))
 
     assert "scores" not in results[0]
+
+
+def test_score_case_turns_nan_into_none():
+    metrics = _fake_metrics()
+    metrics["faithfulness"] = FakeMetric(float("nan"))
+
+    scores = asyncio.run(
+        score_case(metrics, question="Q?", answer="A.", expected_answer="Expected.", chunks=_chunks())
+    )
+
+    assert scores["faithfulness"] is None
+    assert scores["context_recall"] == 0.8
