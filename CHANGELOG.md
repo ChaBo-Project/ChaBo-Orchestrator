@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.9.5](https://github.com/ChaBo-Project/ChaBo-Orchestrator/compare/chabo-rag-orchestrator-v0.9.4...chabo-rag-orchestrator-v0.9.5) (2026-11-26)
+
+
+### Features
+
+* add test-runner, change-reviewer and security-auditor agents ([63b6727](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/63b6727ffa4fbf219db2b9e9eb671b860f1ac066))
+* add test-runner, change-reviewer and security-auditor agents ([#96](https://github.com/ChaBo-Project/ChaBo-Orchestrator/issues/96)) ([62fb0e1](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/62fb0e151b16b8d10e26f1a1fbc5f2f6c14c14b8))
+* make RAGAS eval tool provider-agnostic and self-contained ([840ffba](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/840ffbad0865b9391e29679d99132ba2f519137a))
+* support openai, HF router and OpenAI-compatible RAGAS judges ([0e99dd8](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/0e99dd86f64ecf4a4b814dd0eb3e34e4773c8401))
+
+
+### Bug Fixes
+
+* config inline comments and gradio Qdrant url scheme ([#50](https://github.com/ChaBo-Project/ChaBo-Orchestrator/issues/50) items 4 and 5) ([0253140](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/0253140763ec8b645550a4a25623114529d75db7))
+* ignore NaN RAGAS scores in run averages ([1260009](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/1260009dd78e0d184e4687e3280662da04275565))
+* keep local absolute paths out of RAGAS run records ([de1915f](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/de1915fa27ece0cf87394f312256fdd08a2ed6a4))
+* make RAGAS Mode B runs isolated and fail cleanly ([8af3a47](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/8af3a475d3ee41d0c4cdead6cc415cc00adb0e84))
+* parse export and trailing comments in deploy.env ([26615e1](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/26615e110861cc38363e69e6e3eb615136ec9352))
+* parse RAGAS test set quotes and Excel booleans correctly ([0da9670](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/0da967082874837e3d02a6b73a50308fd93570e1))
+* point Dependabot at tests/eval/ragas and group security updates ([ae1ef12](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/ae1ef120364c8f49d569efca36853b684f8024ef))
+* private-only reports for security-auditor and explicit preflight for test-runner ([e327fbd](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/e327fbd0c299f7c1d2b0f71988aecbe862b5550d))
+* refuse remote plain-http eval endpoints, support private HF Spaces ([aeecf30](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/aeecf30b06a50f2ee1236069ba33ac2ff6ca79d5))
+* require credential-free environment for test-runner ([a23d3a6](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/a23d3a67e3b0a0cd471c1745922c77f2632e0e44))
+* send all Qdrant wrapper inputs in the deployed retrieval test ([8318d47](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/8318d47d400dc5545e453a55a71e5bc41dcf4bfa))
+* send all Qdrant wrapper inputs in the deployed retrieval test ([2619007](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/2619007f5534d469fb88692dcc470280e30fc115))
+* strip inline # comments in config and require a scheme for gradio Qdrant url ([f1d9602](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/f1d9602270343d86d2a7451c4b2b228842441007))
+* validate RAGAS judge connections and eval inputs ([90c1d4f](https://github.com/ChaBo-Project/ChaBo-Orchestrator/commit/90c1d4f64814bad3637a5813c30fda86498bbb7b))
+
 ## [0.9.4](https://github.com/ChaBo-Project/ChaBo-Orchestrator/compare/chabo-rag-orchestrator-v0.9.3...chabo-rag-orchestrator-v0.9.4) (2026-11-10)
 
 
