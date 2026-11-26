@@ -23,6 +23,27 @@ API will be available at `http://localhost:7860`. Interactive docs at `http://lo
 
 > Configuration precedence: **kwargs → env vars → `INSTANCE_CONFIG_DIR/params.override.cfg` → `params.cfg` → hardcoded defaults**
 
+### Dependencies
+
+Each requirements set has two files:
+
+| You edit | Generated lock (installed by Docker, CI, local envs) |
+|---|---|
+| `requirements.in` (app) | `requirements.txt` |
+| `tests/eval/ragas/requirements-eval.in` (RAGAS eval) | `tests/eval/ragas/requirements-eval.txt` |
+
+The `.in` files list only **direct** dependencies, pinned exactly. The `.txt` locks pin everything, transitive dependencies included, with `# via` comments showing why each one is there. Never edit a `.txt` by hand.
+
+To add, remove or upgrade a dependency, edit the `.in` file and regenerate its lock **on Linux with Python 3.11** (the image's platform), then commit both files:
+
+```bash
+pip install -r requirements-dev.txt          # provides pip-compile
+pip-compile --strip-extras requirements.in
+pip-compile --strip-extras tests/eval/ragas/requirements-eval.in
+```
+
+`pip-compile` keeps the existing pins in the lock unless you pass `--upgrade` (all packages) or `--upgrade-package <name>`. Dependabot understands this layout: it updates the `.in` pin and regenerates the lock.
+
 ---
 
 ## Codebase Layers

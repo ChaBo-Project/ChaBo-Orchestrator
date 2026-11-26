@@ -1,0 +1,38 @@
+# Direct runtime dependencies of the orchestrator (src/). Edit THIS file, not requirements.txt.
+# After editing, regenerate the lock on Linux / Python 3.11 (pip-tools is in requirements-dev.txt):
+#   pip-compile --strip-extras requirements.in
+# The Dockerfile, CI and local envs install requirements.txt (the generated lock).
+
+# --- API server ---
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+langserve[all]==0.3.3
+python-multipart==0.0.34        # not imported; FastAPI needs it for file uploads (/chatfed-with-file-stream)
+
+# --- LLM layer + orchestration ---
+langchain-core==1.8.4
+langchain-openai==1.8.5
+langchain-anthropic==1.7.12
+langchain-cohere==0.6.0
+langchain-huggingface==1.3.0
+langchain-text-splitters==1.2.0
+langgraph==1.2.24
+
+# --- Retrieval ---
+qdrant-client==1.20.0
+fastembed==0.9.1
+gradio-client==2.7.2            # [qdrant] mode = gradio
+
+# --- Ingestion ---
+pypdf2==3.0.1
+python-docx==1.2.0
+pandas==3.1.1                   # upload_parquet.py
+pyarrow==26.0.1                 # not imported; pandas.read_parquet engine
+
+# --- Config / HTTP / utilities ---
+pydantic==2.14.4
+typing-extensions==4.16.0
+httpx==0.28.1
+requests==2.34.2
+pyyaml==6.0.4
+python-dotenv==1.2.4

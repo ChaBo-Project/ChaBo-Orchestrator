@@ -1,0 +1,16 @@
+# Direct dependencies of the RAGAS eval (tests/eval/ragas/). Edit THIS file, not requirements-eval.txt.
+# After editing, regenerate the lock on Linux / Python 3.11 (pip-tools is in requirements-dev.txt):
+#   pip-compile --strip-extras tests/eval/ragas/requirements-eval.in
+# pytest and ruff come from requirements-dev.txt.
+
+# --- Eval itself ---
+ragas==0.4.4
+openai==3.3.0                   # judge.py
+pandas==3.1.1
+openpyxl==3.1.5                 # not imported; pandas.read_excel engine (testset.py)
+httpx==0.28.1
+
+# --- Needed by src/components/utils.py, which judge.py / run_eval.py import ---
+requests==2.34.2
+pyyaml==6.0.4
+python-dotenv==1.2.4
