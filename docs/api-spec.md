@@ -19,8 +19,14 @@ Authentication: none at the app layer. Deploy behind a proxy if you need it.
 
 ### `GET /health`
 ```json
-{"status": "healthy"}
+{
+  "status": "healthy",
+  "version": "dev",
+  "commit": "unknown"
+}
 ```
+
+Release images report their build version and Git commit. Development builds default to `dev` and `unknown` when build metadata is absent.
 
 ### `GET /`
 Endpoint directory (`message`, `endpoints`).

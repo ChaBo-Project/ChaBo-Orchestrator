@@ -395,3 +395,16 @@ def test_mixed_run_records_flag_and_warns_once(tmp_path, monkeypatch, capsys):
         "history_mixed": "true",
         "version_warnings": 1,
     }
+
+
+def test_mixed_warning_mentions_commit_when_version_matches():
+    from run_eval import instance_info, version_warning
+
+    results = [
+        {"instance": {"version": "0.9.6", "commit": "abc1234"}},
+        {"instance": {"version": "0.9.6", "commit": "def5678"}},
+    ]
+
+    instance = instance_info(results)
+    assert instance["mixed"] is True
+    assert "version or commit changed" in version_warning(instance, "0.9.6")

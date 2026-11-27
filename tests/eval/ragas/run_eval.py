@@ -88,8 +88,8 @@ def version_warning(instance: Dict[str, Any], tool_version: Optional[str]) -> Op
     """A warning when the tested instance and this eval tool may not match - never blocks."""
     if instance.get("mixed"):
         return (
-            "the instance version changed during the run or could not be "
-            "verified for every response."
+            "the instance version or commit changed during the run, "
+            "or could not be verified for every response."
         )
     if instance.get("version") in UNVERIFIABLE_VERSIONS or tool_version in UNVERIFIABLE_VERSIONS:
         return (
