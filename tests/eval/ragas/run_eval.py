@@ -71,26 +71,26 @@ def _tool_version() -> Optional[str]:
 
 
 def instance_info(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Version/commit of the orchestrator that answered, from the /eval-query responses.
-    "unknown" for instances older than the version field; mixed=True if it changed
-    mid-run (e.g. a redeploy during the eval)."""
-    seen = []
+    """Summarize the version and commit reported by the eval responses."""
+    seen = set()
     for result in results:
-        info = result.get("instance")
-        if info and info not in seen:
-            seen.append(info)
-    first = seen[0] if seen else {}
-    return {
-        "version": first.get("version", "unknown"),
-        "commit": first.get("commit", "unknown"),
-        "mixed": len(seen) > 1,
-    }
+        info = result.get("instance") or {}
+        version = info.get("version") or "unknown"
+        commit = info.get("commit") or "unknown"
+        seen.add((version, commit))
+
+    mixed = len(seen) > 1
+    version, commit = next(iter(seen)) if len(seen) == 1 else ("unknown", "unknown")
+    return {"version": version, "commit": commit, "mixed": mixed}
 
 
 def version_warning(instance: Dict[str, Any], tool_version: Optional[str]) -> Optional[str]:
     """A warning when the tested instance and this eval tool may not match - never blocks."""
     if instance.get("mixed"):
-        return "the instance version changed during the run (redeploy?) - results mix versions."
+        return (
+            "the instance version changed during the run or could not be "
+            "verified for every response."
+        )
     if instance.get("version") in UNVERIFIABLE_VERSIONS or tool_version in UNVERIFIABLE_VERSIONS:
         return (
             f"can't verify version match (instance {instance.get('version')!r}, "
@@ -282,6 +282,7 @@ async def _score_and_record(
         # The orchestrator that answered vs. the eval tool checkout that scored.
         "instance_version": instance["version"],
         "instance_commit": instance["commit"],
+        "instance_mixed": instance["mixed"],
         "eval_tool_version": tool_version,
         "eval_tool_commit": _git_commit(),
         # File names only: results get shared, and absolute paths expose the local machine.
@@ -302,8 +303,6 @@ async def _score_and_record(
     print(f"Blocked-correctness: {summary['blocked_correctness']}")
     if summary["scoring_errors"]:
         print(f"Warning: {summary['scoring_errors']} case(s) could not be scored - see scoring_error in cases.jsonl")
-    if warning:
-        print(f"Warning: {warning}")
     print(f"Results written to {args.run_dir}")
     return 0
 

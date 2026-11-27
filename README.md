@@ -645,6 +645,7 @@ python tests/eval/ragas/run_eval.py --endpoint http://localhost:7860 --testset p
 - `--limit N` runs only the first N cases (cheap dry run).
 - Output: a UTC-timestamped folder per run under `tests/eval/ragas/results/` (gitignored, override with `--out-dir`), containing the per-case results and `summary.json`. A row is appended to `runs.csv` in the same base folder for each run.
 - Versions: the eval tool ships with the Orchestrator and shares its version. Each run records the version and commit of the instance that answered (`instance_version`, `instance_commit`) and of the local eval-tool checkout (`eval_tool_version`, `eval_tool_commit`). If they differ, the CLI warns: check out the tag matching the instance (`chabo-rag-orchestrator-v<version>`) for comparable results.
+- Mixed runs: if responses report different instance versions or commits, or only some responses include that information, `manifest.json` and `runs.csv` mark `instance_mixed` as true. The run-level instance version and commit are reported as `unknown`; the CLI warns once and continues scoring.
 - A rejected token (401/404) stops the run before any judging cost.
 - `--endpoint` must be `https://`, except for `localhost`/`127.0.0.1`. Plain `http://` to another host is refused, because the eval token would travel unencrypted; `--allow-http` overrides this for a trusted private network.
 - For a private Hugging Face Space, set `HF_TOKEN`: it is sent as a Bearer header to `*.hf.space` hosts only.

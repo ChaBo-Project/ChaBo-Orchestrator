@@ -339,3 +339,59 @@ def test_manifest_records_instance_and_eval_tool_versions(tmp_path, monkeypatch)
     assert manifest["instance_commit"] == "abc1234"
     assert manifest["eval_tool_version"] == "0.9.6"
     assert "eval_tool_commit" in manifest and "chabo_commit" not in manifest
+
+@pytest.mark.parametrize("missing_first", [False, True])
+def test_instance_info_marks_known_and_missing_metadata_as_mixed(missing_first):
+    from run_eval import instance_info
+
+    known = {"instance": {"version": "0.9.6", "commit": "abc1234"}}
+    missing = {}
+    results = [missing, known] if missing_first else [known, missing]
+
+    assert instance_info(results)["mixed"] is True
+
+def test_mixed_run_records_flag_and_warns_once(tmp_path, monkeypatch, capsys):
+    import csv
+    import run_eval
+
+    _patch_pipeline(monkeypatch)
+
+    async def fake_run_testset(endpoint, token, cases):
+        known = {
+            "case_id": 1,
+            "question": "First question?",
+            "expected_answer": "Expected answer",
+            "should_be_answered": True,
+            "answer": "Answer",
+            "chunks": [],
+            "status": "no_context",
+            "error": None,
+            "instance": {"version": "0.9.6", "commit": "abc1234"},
+        }
+        missing = {**known, "case_id": 2, "instance": None}
+        return [known, missing]
+
+    monkeypatch.setattr(run_eval, "run_testset", fake_run_testset)
+    monkeypatch.setattr(run_eval, "_tool_version", lambda: "0.9.6")
+
+    assert asyncio.run(
+        run_eval._score_and_record(
+            "http://x", "tok", _args(tmp_path), {"mode": "A"}
+        )
+    ) == 0
+
+    results_dir = tmp_path / "results"
+    manifest = json.loads((results_dir / "run-1" / "manifest.json").read_text())
+    with (results_dir / "runs.csv").open(encoding="utf-8", newline="") as f:
+        history_row = next(csv.DictReader(f))
+
+    output = capsys.readouterr().out
+    assert {
+        "manifest_mixed": manifest.get("instance_mixed"),
+        "history_mixed": history_row.get("instance_mixed", "").lower(),
+        "version_warnings": output.count("Warning: the instance version"),
+    } == {
+        "manifest_mixed": True,
+        "history_mixed": "true",
+        "version_warnings": 1,
+    }
