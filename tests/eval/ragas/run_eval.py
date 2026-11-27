@@ -54,6 +54,56 @@ SECRET_ENV_VARS = (
 )
 
 
+RELEASE_MANIFEST_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".release-please-manifest.json"
+)
+UNVERIFIABLE_VERSIONS = {None, "", "dev", "unknown"}
+
+
+def _tool_version() -> Optional[str]:
+    """Release version of the orchestrator checkout this eval tool runs from (the eval tool
+    ships with the orchestrator, so they share one version). None if it can't be read."""
+    try:
+        with open(RELEASE_MANIFEST_PATH, encoding="utf-8") as f:
+            return json.load(f).get(".")
+    except (OSError, ValueError):
+        return None
+
+
+def instance_info(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarize the version and commit reported by the eval responses."""
+    seen = set()
+    for result in results:
+        info = result.get("instance") or {}
+        version = info.get("version") or "unknown"
+        commit = info.get("commit") or "unknown"
+        seen.add((version, commit))
+
+    mixed = len(seen) > 1
+    version, commit = next(iter(seen)) if len(seen) == 1 else ("unknown", "unknown")
+    return {"version": version, "commit": commit, "mixed": mixed}
+
+
+def version_warning(instance: Dict[str, Any], tool_version: Optional[str]) -> Optional[str]:
+    """A warning when the tested instance and this eval tool may not match - never blocks."""
+    if instance.get("mixed"):
+        return (
+            "the instance version or commit changed during the run, "
+            "or could not be verified for every response."
+        )
+    if instance.get("version") in UNVERIFIABLE_VERSIONS or tool_version in UNVERIFIABLE_VERSIONS:
+        return (
+            f"can't verify version match (instance {instance.get('version')!r}, "
+            f"eval tool {tool_version!r})."
+        )
+    if instance["version"] != tool_version:
+        return (
+            f"instance runs {instance['version']} but this eval tool is from {tool_version} - "
+            f"check out tag chabo-rag-orchestrator-v{instance['version']} for comparable results."
+        )
+    return None
+
+
 def _git_commit() -> Optional[str]:
     """Short commit hash of the local chabo checkout running this tooling - best-effort,
     None if git isn't available or this isn't a git checkout."""
@@ -167,6 +217,7 @@ async def run_testset(endpoint: str, token: str, cases: List) -> List[Dict[str, 
                 ],
                 "status": result.get("status", "error"),
                 "error": result.get("error"),
+                "instance": result.get("instance"),
             })
     return results
 
@@ -204,6 +255,12 @@ async def _score_and_record(
         print(f"Aborting: {exc}")
         return 1
 
+    instance = instance_info(results)
+    tool_version = _tool_version()
+    warning = version_warning(instance, tool_version)
+    if warning:
+        print(f"Warning: {warning}")
+
     # Save the raw answers before scoring, so a crash during scoring does not lose them.
     # Overwritten below with the scored version.
     os.makedirs(args.run_dir, exist_ok=True)
@@ -222,7 +279,12 @@ async def _score_and_record(
     run_context = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "endpoint": endpoint,
-        "chabo_commit": _git_commit(),
+        # The orchestrator that answered vs. the eval tool checkout that scored.
+        "instance_version": instance["version"],
+        "instance_commit": instance["commit"],
+        "instance_mixed": instance["mixed"],
+        "eval_tool_version": tool_version,
+        "eval_tool_commit": _git_commit(),
         # File names only: results get shared, and absolute paths expose the local machine.
         "testset_path": os.path.basename(args.testset),
         "testset_hash": test_set_hash(args.testset),

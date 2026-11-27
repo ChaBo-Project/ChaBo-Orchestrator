@@ -280,3 +280,131 @@ def test_malformed_judge_config_returns_a_cli_error(tmp_path, monkeypatch, capsy
         )
     ) == 1
     assert "Judge configuration error:" in capsys.readouterr().out
+
+
+def test_instance_info_from_responses():
+    from run_eval import instance_info
+
+    same = {"version": "0.9.6", "commit": "abc"}
+    assert instance_info([{"instance": same}, {"instance": same}]) == {
+        "version": "0.9.6", "commit": "abc", "mixed": False,
+    }
+    assert instance_info([{"instance": None}]) == {"version": "unknown", "commit": "unknown", "mixed": False}
+    assert instance_info([{"instance": same}, {"instance": {"version": "0.9.7", "commit": "def"}}])["mixed"]
+
+
+@pytest.mark.parametrize("instance, tool, expected", [
+    ({"version": "0.9.6", "mixed": False}, "0.9.6", None),
+    ({"version": "0.9.5", "mixed": False}, "0.9.6", "chabo-rag-orchestrator-v0.9.5"),
+    ({"version": "dev", "mixed": False}, "0.9.6", "can't verify"),
+    ({"version": "unknown", "mixed": False}, "0.9.6", "can't verify"),
+    ({"version": "0.9.6", "mixed": False}, None, "can't verify"),
+    ({"version": "0.9.6", "mixed": True}, "0.9.6", "changed during the run"),
+])
+def test_version_warning(instance, tool, expected):
+    from run_eval import version_warning
+
+    warning = version_warning(instance, tool)
+    if expected is None:
+        assert warning is None
+    else:
+        assert expected in warning
+
+
+def test_tool_version_reads_release_manifest():
+    import run_eval
+
+    with open(run_eval.RELEASE_MANIFEST_PATH, encoding="utf-8") as f:
+        assert run_eval._tool_version() == json.load(f)["."]
+
+
+def test_manifest_records_instance_and_eval_tool_versions(tmp_path, monkeypatch):
+    import run_eval
+
+    _patch_pipeline(monkeypatch)
+
+    async def fake_run_testset(endpoint, token, cases):
+        return [{
+            "case_id": 1, "question": "q?", "expected_answer": "e", "should_be_answered": True,
+            "answer": "a", "chunks": [], "status": "no_context", "error": None,
+            "instance": {"version": "0.9.6", "commit": "abc1234"},
+        }]
+
+    monkeypatch.setattr(run_eval, "run_testset", fake_run_testset)
+    monkeypatch.setattr(run_eval, "_tool_version", lambda: "0.9.6")
+    assert asyncio.run(run_eval._score_and_record("http://x", "tok", _args(tmp_path), {"mode": "A"})) == 0
+
+    manifest = json.loads((tmp_path / "results" / "run-1" / "manifest.json").read_text())
+    assert manifest["instance_version"] == "0.9.6"
+    assert manifest["instance_commit"] == "abc1234"
+    assert manifest["eval_tool_version"] == "0.9.6"
+    assert "eval_tool_commit" in manifest and "chabo_commit" not in manifest
+
+@pytest.mark.parametrize("missing_first", [False, True])
+def test_instance_info_marks_known_and_missing_metadata_as_mixed(missing_first):
+    from run_eval import instance_info
+
+    known = {"instance": {"version": "0.9.6", "commit": "abc1234"}}
+    missing = {}
+    results = [missing, known] if missing_first else [known, missing]
+
+    assert instance_info(results)["mixed"] is True
+
+def test_mixed_run_records_flag_and_warns_once(tmp_path, monkeypatch, capsys):
+    import csv
+    import run_eval
+
+    _patch_pipeline(monkeypatch)
+
+    async def fake_run_testset(endpoint, token, cases):
+        known = {
+            "case_id": 1,
+            "question": "First question?",
+            "expected_answer": "Expected answer",
+            "should_be_answered": True,
+            "answer": "Answer",
+            "chunks": [],
+            "status": "no_context",
+            "error": None,
+            "instance": {"version": "0.9.6", "commit": "abc1234"},
+        }
+        missing = {**known, "case_id": 2, "instance": None}
+        return [known, missing]
+
+    monkeypatch.setattr(run_eval, "run_testset", fake_run_testset)
+    monkeypatch.setattr(run_eval, "_tool_version", lambda: "0.9.6")
+
+    assert asyncio.run(
+        run_eval._score_and_record(
+            "http://x", "tok", _args(tmp_path), {"mode": "A"}
+        )
+    ) == 0
+
+    results_dir = tmp_path / "results"
+    manifest = json.loads((results_dir / "run-1" / "manifest.json").read_text())
+    with (results_dir / "runs.csv").open(encoding="utf-8", newline="") as f:
+        history_row = next(csv.DictReader(f))
+
+    output = capsys.readouterr().out
+    assert {
+        "manifest_mixed": manifest.get("instance_mixed"),
+        "history_mixed": history_row.get("instance_mixed", "").lower(),
+        "version_warnings": output.count("Warning: the instance version"),
+    } == {
+        "manifest_mixed": True,
+        "history_mixed": "true",
+        "version_warnings": 1,
+    }
+
+
+def test_mixed_warning_mentions_commit_when_version_matches():
+    from run_eval import instance_info, version_warning
+
+    results = [
+        {"instance": {"version": "0.9.6", "commit": "abc1234"}},
+        {"instance": {"version": "0.9.6", "commit": "def5678"}},
+    ]
+
+    instance = instance_info(results)
+    assert instance["mixed"] is True
+    assert "version or commit changed" in version_warning(instance, "0.9.6")

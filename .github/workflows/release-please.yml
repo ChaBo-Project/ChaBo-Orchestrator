@@ -46,3 +46,7 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/chabo-project/chabo-rag-orchestrator:${{ needs.release-please.outputs.version }}
+          # Baked into the image, reported by /health and /eval-query.
+          build-args: |
+            CHABO_VERSION=${{ needs.release-please.outputs.version }}
+            CHABO_COMMIT=${{ github.sha }}
