@@ -2,3 +2,4 @@
 # Install with: pip install -r requirements-dev.txt
 ruff==0.16.1
 pytest==9.0.3
+pip-tools==7.7.0                # pip-compile: regenerates requirements*.txt from the .in files
